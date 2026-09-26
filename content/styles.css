@@ -1,0 +1,607 @@
+/* i668 港股打新预测插件 · Analytics Blue 风格 */
+/* 仅作用于「注入的列 / 浮条」与「站点容器的宽度锁」（见 ①） */
+
+/* ===== ① 放开站点容器的宽度锁（v0.3.0 关键）=====
+   站点根容器 `.app { max-width: 960px }` 把整页内容（导航 / 标题 / 筛选栏 / 表格）
+   死锁在 960px，表格因此只有 920px；在 1460px 的窗口里左右各白空 270px（实测）。
+   放开它，腾出的空间全部归预测 3 列 —— 原表与预测列在**一屏内同时显示**，
+   股票名称/代码不会再被横向滚动挤出视野，也不再需要任何跳转按钮。
+
+   ⚠️ 为什么不直接写 `.app { max-width: none }`：
+      站点「新股」列是**弹性列**（colgroup 里没有固定宽度）。容器一放宽，它就会
+      自己从 200px 涨到 700px（真机实测）—— 那才是"改坏人家原表"。
+   故改为**类名触发**：由 JS 先在「原生 960px 容器」下量准并锁死原表各列宽，
+   写完 colgroup 之后才给 <html> 加 `i668p-wide` —— 多出来的宽度只会落进预测列。
+   另已核实：顶部导航 NAV.nav 同在 .app 内 → 导航与内容同步变宽、左右始终对齐。 */
+html.i668p-wide .app { max-width: none !important; }
+
+/* ===== ② el-table 适配 =====
+   i668 列表是 Element UI 的 el-table（Vue 托管）：
+   · 容器与 body-wrapper 的 overflow 都是 hidden —— 只 append 列会被直接裁掉；
+   · table 宽度内联且会被 Vue 重置，故由 JS 每轮重设（原表宽 920 + 3 列）。
+   表头表体各有一份 colgroup，二者同处一个滚动容器 → 横向天然同步。
+   窗口够宽时**不产生滚动**；窗口过窄时这里提供横向滚动作为降级。 */
+.el-table { overflow-x: auto !important; }
+.el-table__inner-wrapper { width: max-content !important; min-width: 100% !important; }
+.el-table__header-wrapper,
+.el-table__body-wrapper { overflow: visible !important; }
+.el-table__body-wrapper .el-scrollbar,
+.el-table__body-wrapper .el-scrollbar__wrap,
+.el-table__body-wrapper .el-scrollbar__view { overflow: visible !important; height: auto !important; }
+
+/* 横向滚动条（仅「窗口过窄」时的降级）：加粗 + 品牌配色。
+   macOS 默认是"自动隐藏的极细覆盖式滚动条"（约 7px 且平时不显示），
+   一旦真的需要滚动会很难发现，故显式加粗到 12px。
+   窗口够宽时（本站 920 + 3×104 = 1232px 即可）这里根本不会出现。 */
+.el-table::-webkit-scrollbar { height: 12px; width: 12px; }
+.el-table::-webkit-scrollbar-track { background: #e9edf3; border-radius: 6px; }
+.el-table::-webkit-scrollbar-thumb {
+  background: #aab6c8;
+  border-radius: 6px;
+  border: 2px solid #e9edf3;
+}
+.el-table::-webkit-scrollbar-thumb:hover { background: #7d8ba3; }
+.el-table::-webkit-scrollbar-corner { background: #e9edf3; }
+
+.i668p-th {
+  background: #0b1b34 !important;
+  color: #f5b64a !important;
+  font-weight: 600 !important;
+  text-align: center !important;
+  vertical-align: middle !important;
+  white-space: nowrap !important;
+}
+
+/* 预测区与站点原表的分界（第一列左侧一道线，视觉上"原表 | 新增区"分明） */
+th[data-pred="s1"],
+td[data-pred="s1"] { border-left: 2px solid #cfd8e3 !important; }
+
+.i668p-th small {
+  display: block;
+  color: #9fb3d1 !important;
+  font-weight: 400 !important;
+  font-size: 11px !important;
+}
+
+.i668p-td {
+  text-align: center !important;
+  vertical-align: middle !important;
+  font-variant-numeric: tabular-nums !important;
+  padding: 4px 0 !important;      /* 对齐站点原始单元格 padding */
+}
+
+/* 两行紧凑排版：站点原始行高仅 32px，预测格内容必须塞得进，
+   否则会把整表行高从 32px 撑到 50px+（= 纵向也在"改原表"）。 */
+.i668p-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  line-height: 1.1;
+}
+
+.i668p-price {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0b1b34;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+/* 列表页首行改显示「中枢 涨幅 · 价格」后（v0.4.6）字符变长，妖股档（+129.5% · 1000.5）
+   可能撑破列宽 → 缩一档字号 + 溢出省略，守住「不撑宽列、不撑高行」的硬约束。 */
+.i668p-price.is-mid {
+  font-size: 11px; letter-spacing: -0.2px; font-weight: 700;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+
+.i668p-pct {
+  font-size: 10px;
+  color: #185fa5;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+/* 当前生效列：琥珀金描边高亮 */
+.i668p-td.is-active {
+  background: #fff8ec !important;
+  box-shadow: inset 0 0 0 2px #f5b64a !important;
+}
+
+/* 失效列：置灰（保留数值，便于回溯；透明度不宜过低以保证可读） */
+.i668p-td.is-inactive {
+  opacity: 0.55 !important;
+  background: #f1f3f7 !important;
+}
+
+/* 空窗期预估（S2 降级估算）：琥珀虚线框 + 淡黄底，与「当前阶段」实线金框、「失效」灰底
+   在同一眼里可区分开 —— 它既不是正式预测，也不是过期值。 */
+.i668p-td.is-prov {
+  background: #fffbf2 !important;
+  box-shadow: inset 0 0 0 1px #f3d9a8 !important;
+}
+.i668p-prov { color: #a36a00; font-weight: 700; }
+
+/* 实测首日等副行标注 */
+.i668p-note {
+  font-size: 10px;
+  color: #8a94a6 !important;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+/* 实测涨跌幅着色：按 A 股惯例，涨红跌绿（只作用于本插件的实测副行） */
+.i668p-note.is-up { color: #c0392b !important; }
+.i668p-note.is-down { color: #1a7f4b !important; }
+
+.i668p-invalid {
+  font-size: 12px;
+  color: #98a4b3 !important;
+}
+
+.i668p-tag {
+  font-size: 10px;
+  color: #ffffff !important;
+  background: #185fa5;
+  border-radius: 6px;
+  padding: 0 5px;
+  display: inline-block;
+}
+
+/* 浮条 */
+#i668p-bar {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #0b1b34;
+  color: #f5b64a;
+  border: 1px solid #f5b64a;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  box-shadow: 0 6px 20px rgba(11, 27, 52, 0.35);
+}
+
+/* 浮条唯一按钮「重算」（琥珀金描边次级按钮）。
+   注：v0.3.0 已移除「→ 预测列 / ← 返回」跳转按钮 —— 布局放开后一屏即全见。 */
+#i668p-bar button {
+  background: transparent;
+  color: #f5b64a;
+  border: 1px solid rgba(245, 182, 74, 0.55);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#i668p-bar button:hover { background: rgba(245, 182, 74, 0.16); }
+
+#i668p-bar .i668p-status {
+  color: #9fb3d1;
+  max-width: 620px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* =====================================================================
+ * v0.4.0 新增：人工设定标记 / 悬浮摘要卡 / 详情页「预测工坊」
+ * ===================================================================== */
+
+/* ----- 人工设定格（列表页）：浅蓝底 + 蓝描边，与「模型预测」的琥珀金区分 ----- */
+.i668p-td.is-manual { background: #eef4fd !important; }
+.i668p-td.is-manual.is-active { box-shadow: inset 0 0 0 2px #185fa5 !important; background: #eef4fd !important; }
+.i668p-note.is-manual { color: #185fa5 !important; font-weight: 600; }
+
+/* ----- 悬浮摘要卡（替代原生 title：能排版、能说清来源与边界）----- */
+#i668p-tip {
+  position: fixed;
+  z-index: 100000;
+  display: none;
+  width: 358px;
+  max-width: 92vw;
+  background: #ffffff;
+  border: 1px solid #cfd8e3;
+  border-left: 3px solid #f5b64a;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(11, 27, 52, 0.20);
+  padding: 9px 12px 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #24344d;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  pointer-events: none;
+}
+#i668p-tip .i668p-tip-h {
+  font-weight: 700;
+  color: #0b1b34;
+  font-size: 12px;
+  margin-bottom: 5px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #eef1f6;
+}
+#i668p-tip .i668p-tip-row { display: flex; gap: 10px; align-items: baseline; }
+#i668p-tip .i668p-tip-k { flex: 0 0 auto; min-width: 72px; color: #7c8aa0; }
+#i668p-tip .i668p-tip-v {
+  flex: 1 1 auto; text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+#i668p-tip .i668p-tip-row.is-strong .i668p-tip-v { color: #0b1b34; font-weight: 700; }
+#i668p-tip .i668p-tip-row.is-warn .i668p-tip-v { color: #a36a00; }
+#i668p-tip .i668p-tip-row.is-dim .i668p-tip-v { color: #8a94a6; font-size: 11px; }
+#i668p-tip .i668p-tip-foot {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px solid #eef1f6;
+  color: #185fa5;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+/* ----- 详情页「预测工坊」的停靠方式（v0.4.2）-----
+   老板两条硬要求：① 别把工坊插进内容流把站点内容往下推；② 右侧那片空白要用起来。
+   实测站点：`.app` 固定 960px 居中、内容区 920px，1460 视口下右侧空 250px。
+   做法 = **只改位置、不改尺寸**：
+     · 宽屏（≥1360）把 `.app` 从「居中」改为「靠左」—— max-width 仍是 960、
+       内容区仍是原来的 920，站点内每一个元素的宽度与排版都不变；
+     · 工坊 fixed 停靠在右侧空白区（不占文档流）。
+   窄屏（<1360）放不下两栏 → 工坊回到文档流、插在内容最上方（保留原来的安全行为）。 */
+/* ⚠️ 选择器必须带 `html.i668p-detail`（特异性 1,1,0）：
+   下面「详情页预测工坊」基础段用的是 `#i668p-ws`（特异性 1,0,0）且**在源码中更靠后**，
+   同特异性下后写者胜 —— 曾用裸 `#i668p-ws` 写本段，结果基础段的 `overflow: hidden`
+   反过来盖掉了这里的 `overflow-y: auto`：工坊内容 2015px、容器仅 790px，
+   被静默裁掉 1225px 且**无法滚动**（老板报「界面不会滑动 / 绿鞋看不到」的真凶）。
+   加类名提权后，无论源码顺序如何，停靠模式一定可滚动。 */
+@media (min-width: 1360px) {
+  html.i668p-detail .app {
+    max-width: 960px !important;    /* 尺寸不变 */
+    margin-left: 20px !important;   /* 位置：居中 → 靠左 */
+    margin-right: auto !important;
+  }
+  html.i668p-detail #i668p-ws {
+    position: fixed;
+    top: 84px;
+    right: 20px;
+    left: auto;
+    /* v0.4.5 加宽（老板：「这个可以做的更宽一点！不太好看啊」）：
+       原上限 620px 在 1700+ 视口下会白白空掉 240~330px。
+       左栏占位固定 = 20(左边距) + 960(.app) + 40(两侧间隙) = 1020px，其余全给工坊，上限提到 860px。
+       ⚠️ **不改 .app 的 960 宽度**，站点排版一字未动；下限也从 340 提到 400（340px 时三张卡片挤到不能看）。 */
+    width: clamp(400px, calc(100vw - 1020px), 860px);
+    max-height: calc(100vh - 108px);
+    overflow-y: auto !important;    /* !important 是第三重保险 */
+    overscroll-behavior: contain;
+    margin: 0;
+    z-index: 900;
+    box-shadow: 0 10px 30px rgba(11, 27, 52, 0.16);
+  }
+  /* 滚动到底部时不与视口贴死，留出呼吸位 */
+  html.i668p-detail #i668p-ws::after { content: ""; display: block; height: 2px; }
+}
+
+@media (max-width: 1359px) {
+  #i668p-ws { position: static; width: auto; max-height: none; margin: 0 0 16px; }
+}
+
+/* 工坊滚动条（内容长时内部滚动；macOS 默认太细，显式加粗） */
+#i668p-ws::-webkit-scrollbar { width: 10px; }
+#i668p-ws::-webkit-scrollbar-track { background: transparent; }
+#i668p-ws::-webkit-scrollbar-thumb { background: #c3ccda; border-radius: 5px; border: 2px solid #fff; }
+#i668p-ws::-webkit-scrollbar-thumb:hover { background: #9aa8bd; }
+
+/* ----- 详情页「预测工坊」----- */
+#i668p-ws,
+#i668p-ws * { box-sizing: border-box; }
+#i668p-ws {
+  /* v0.4.5：工坊内部布局改为按**面板自身宽度**响应（容器查询），而不是按视口。
+     ⚠️ 之前用的是视口媒体查询 —— 面板是固定宽度侧栏，视口完全反映不了它的真实宽度：
+        1460 视口下面板只有 440px，却仍按「视口 > 820px」硬排 3 列，三张卡各 137px，
+        文字被截成「降级估算：未…」—— 这就是老板报「不太好看」的真凶。
+     （工坊内没有 fixed 定位子孙，浮条 / 悬浮卡都挂在 body 上，故 contain 不会改变它们的定位基准。） */
+  container-type: inline-size;
+  container-name: i668pws;
+  background: #ffffff;
+  border: 1px solid #d7dee9;
+  border-radius: 12px;
+  /* ⚠️ 只锁横向：用 `overflow: hidden` 简写会连 overflow-y 一起复位成 hidden，
+     从而盖掉上方停靠模式的 `overflow-y: auto`（实测事故，见该处注释）。 */
+  overflow-x: hidden;
+  margin: 0 0 16px;
+  color: #24344d;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.i668p-ws-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 16px;
+  background: #0b1b34;
+}
+.i668p-ws-title-box { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.i668p-ws-title { color: #f5b64a; font-weight: 700; font-size: 15px; letter-spacing: 1px; }
+.i668p-ws-code { color: #ffffff; font-weight: 600; font-size: 13px; }
+.i668p-ws-stage {
+  color: #0b1b34; background: #f5b64a;
+  border-radius: 999px; padding: 1px 9px; font-size: 11px; font-weight: 600;
+}
+/* 空窗期 chip（v0.4.8）：不是「招股期」也不是「中签后」，别用实心金误导 —— 琥珀描边即可 */
+.i668p-ws-stage.is-await {
+  color: #a36a00; background: #fdf4e3;
+  box-shadow: inset 0 0 0 1px #e0b463;
+}
+.i668p-ws-hacts { display: flex; gap: 8px; flex: 0 0 auto; }
+.i668p-ws-body { padding: 14px 16px 16px; }
+
+/* 按钮 */
+#i668p-ws .i668p-ws-btn {
+  appearance: none;
+  border: 1px solid #cfd8e3;
+  background: #ffffff;
+  color: #24344d;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.5;
+}
+#i668p-ws .i668p-ws-btn:hover { border-color: #185fa5; color: #185fa5; background: #f4f8fe; }
+#i668p-ws .i668p-ws-btn.is-primary { background: #185fa5; border-color: #185fa5; color: #ffffff; }
+#i668p-ws .i668p-ws-btn.is-primary:hover { background: #124a80; border-color: #124a80; color: #ffffff; }
+#i668p-ws .i668p-ws-btn.is-ghost { border-color: transparent; color: #7c8aa0; padding: 4px 8px; }
+#i668p-ws .i668p-ws-btn.is-ghost:hover { color: #185fa5; background: #f4f8fe; }
+#i668p-ws .i668p-ws-head .i668p-ws-btn { background: transparent; border-color: rgba(245, 182, 74, 0.5); color: #f5b64a; }
+#i668p-ws .i668p-ws-head .i668p-ws-btn:hover { background: rgba(245, 182, 74, 0.16); color: #f5b64a; }
+
+/* 基本事实行 */
+.i668p-ws-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 2px 18px;
+  padding: 8px 12px;
+  background: #f7f9fc;
+  border: 1px solid #e4e9f1;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.i668p-ws-kv { display: flex; gap: 8px; align-items: baseline; font-size: 12px; }
+.i668p-ws-kk { flex: 0 0 auto; min-width: 88px; color: #7c8aa0; }
+.i668p-ws-vv { flex: 1 1 auto; color: #24344d; font-variant-numeric: tabular-nums; }
+
+/* 小节标题 */
+.i668p-ws-sec {
+  display: flex; align-items: baseline; gap: 10px;
+  margin: 14px 0 7px;
+  padding-left: 9px;
+  border-left: 3px solid #f5b64a;
+}
+.i668p-ws-sec-t { color: #0b1b34; font-weight: 700; font-size: 13px; }
+.i668p-ws-sec-s { color: #8a94a6; font-size: 11px; }
+
+/* 三阶段卡 */
+/* 三阶段卡：按**面板自身宽度**自动决定列数（容器查询见文件末）。
+   196px 下限来自实测：卡片内「18.209 – 31.169」这种价格串 + 星标需要约 190px 才不换行。 */
+.i668p-ws-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 10px; }
+.i668p-ws-card {
+  border: 1px solid #d7dee9;
+  border-radius: 10px;
+  padding: 10px 12px 11px;
+  background: #fbfcfe;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.i668p-ws-card.is-cur { border-color: #f5b64a; background: #fff9ee; box-shadow: inset 0 0 0 1px #f5b64a; }
+.i668p-ws-card.is-past { background: #f1f3f7; opacity: 0.78; }
+.i668p-ws-card.is-dim { background: #f7f9fc; }
+.i668p-ws-card.is-actual { border-style: dashed; border-color: #a9bdd8; }
+/* 空窗期：S2 是「当前阶段的预估值」—— 琥珀**虚线**框。三态一眼可辨：
+   实线金框＝已定稿的当前阶段 / 琥珀虚线＝当前阶段但只有预估值 / 灰底＝已过阶段。
+   （v0.4.8 老板指出空窗期 S1 被误标「当前阶段」时才补的这条：框要跟着焦点走） */
+.i668p-ws-card.is-prov { border-style: dashed; border-color: #e0b463; background: #fffbf2; }
+.i668p-ws-card.has-ov { border-color: #185fa5; }
+.i668p-ws-card.is-editing { grid-column: 1 / -1; border-color: #185fa5; background: #f4f8fe; box-shadow: inset 0 0 0 1px #185fa5; }
+.i668p-ws-ch { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.i668p-ws-ct { color: #0b1b34; font-weight: 700; font-size: 12.5px; }
+.i668p-ws-cs { color: #8a94a6; font-size: 10.5px; font-weight: 600; letter-spacing: 0.5px; }
+.i668p-ws-basis { color: #8a94a6; font-size: 11px; line-height: 1.4; }
+.i668p-ws-price {
+  color: #0b1b34; font-weight: 700; font-size: 17px;
+  font-variant-numeric: tabular-nums; line-height: 1.25; margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+/* 「中枢」= 最可能落点（v0.4.6 新增，老板要的"能用的预测"就是它）—— 视觉上是主数字 */
+.i668p-ws-mid {
+  display: flex; align-items: baseline; gap: 6px; margin-top: 3px;
+  padding: 4px 8px; border-radius: 7px;
+  background: #eef4ff; border: 1px solid #d3e2fb;
+}
+.i668p-ws-mid-k { font-size: 10.5px; color: #6b7a91; flex: none; }
+.i668p-ws-mid-v {
+  font-size: 19px; font-weight: 800; color: #0b1b34;
+  font-variant-numeric: tabular-nums; line-height: 1.15;
+}
+.i668p-ws-mid-p {
+  margin-left: auto; font-size: 11.5px; font-weight: 700; color: #185fa5;
+  font-variant-numeric: tabular-nums;
+}
+/* 有中枢时，区间价格降为次要信息（小一号、浅一档） */
+.i668p-ws-price.is-sub { font-size: 13px; color: #5b6a80; font-weight: 600; }
+.i668p-ws-tag.is-band { background: #f2f5f9; color: #7c8aa0; }
+.i668p-ws-price.is-empty { color: #b9c3d1; }
+.i668p-ws-pct { font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.i668p-ws-pct.is-dim { color: #a8b2c1; }
+.i668p-ws-tilde { color: #9aa6b8; }
+.i668p-ws-conf { color: #ba7517; letter-spacing: 1px; }
+.i668p-ws-pct .is-up { color: #c0392b; }
+.i668p-ws-pct .is-down { color: #1a7f4b; }
+.i668p-ws-tag {
+  display: inline-block; align-self: flex-start;
+  font-size: 10.5px; border-radius: 5px; padding: 1px 6px;
+  background: #eef1f6; color: #5b6a80;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.i668p-ws-tag.is-manual { background: #e3eefb; color: #185fa5; font-weight: 600; }
+/* 降级估算（空窗期 S2 / 站点未录入超购倍数）：琥珀色，与「人工设定」蓝、「当前阶段」金区分开 */
+.i668p-ws-tag.is-prov { background: #fdf4e3; color: #a36a00; font-weight: 600; }
+.i668p-ws-state.is-prov { color: #a36a00; font-weight: 700; }
+.i668p-ws-state { font-size: 11px; margin-top: 1px; }
+.i668p-ws-state.is-cur { color: #a36a00; font-weight: 700; }
+.i668p-ws-state.is-past { color: #8a94a6; }
+.i668p-ws-state.is-dim { color: #a8b2c1; }
+.i668p-ws-state.is-actual { color: #185fa5; font-weight: 600; }
+.i668p-ws-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+
+/* 编辑态输入 */
+.i668p-ws-field { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.i668p-ws-field > span { flex: 0 0 64px; color: #6b7a91; font-size: 12px; }
+#i668p-ws .i668p-ws-in {
+  flex: 1 1 auto; min-width: 0;
+  border: 1px solid #cfd8e3; border-radius: 6px;
+  padding: 4px 9px; font-size: 12px; color: #24344d; background: #ffffff;
+  font-family: inherit; line-height: 1.6;
+}
+#i668p-ws .i668p-ws-in:focus { outline: none; border-color: #185fa5; box-shadow: 0 0 0 2px rgba(24, 95, 165, 0.15); }
+.i668p-ws-hint { color: #8a94a6; font-size: 11.5px; line-height: 1.5; margin-top: 5px; }
+.i668p-ws-msg { color: #c0392b; font-size: 11.5px; margin-top: 5px; }
+.i668p-ws-warn {
+  color: #a36a00; background: #fdf4e3; border: 1px solid #f3d9a8;
+  border-radius: 8px; padding: 7px 10px; font-size: 12px; line-height: 1.5; margin: 6px 0;
+}
+
+/* 计算过程表 */
+.i668p-ws-proc { border: 1px solid #e4e9f1; border-radius: 8px; overflow: hidden; }
+.i668p-ws-prow {
+  display: grid; grid-template-columns: 116px minmax(0, 1fr) 84px; gap: 10px;
+  padding: 6px 11px; border-bottom: 1px solid #eef1f6; font-size: 12px;
+  align-items: baseline;
+}
+.i668p-ws-prow:last-child { border-bottom: none; }
+.i668p-ws-prow.is-sum { background: #f7f9fc; }
+.i668p-ws-pk { color: #0b1b34; font-weight: 600; }
+.i668p-ws-pd { color: #6b7a91; overflow-wrap: anywhere; }
+.i668p-ws-pv {
+  text-align: right; font-weight: 700; color: #24344d;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.i668p-ws-pv.is-up { color: #c0392b; }
+.i668p-ws-pv.is-down { color: #1a7f4b; }
+.i668p-ws-pv.is-flat { color: #8a94a6; font-weight: 500; }
+
+/* 因子清单 */
+.i668p-ws-fac { border: 1px solid #e4e9f1; border-radius: 8px; overflow: hidden; margin-top: 8px; }
+.i668p-ws-fac.is-miss { border-color: #f3d9a8; }
+/* 「只展示、不入权重」一类（如绿鞋）：蓝色边框，与"已纳入"区分，且不暗示它参与了打分 */
+.i668p-ws-fac.is-shown { border-color: #cfe0f2; }
+.i668p-ws-fac.is-shown .i668p-ws-fac-h { background: #eef4fd; color: #185fa5; }
+.i668p-ws-fac-h {
+  padding: 6px 11px; background: #f7f9fc;
+  color: #0b1b34; font-weight: 700; font-size: 12px;
+}
+.i668p-ws-fac-h.is-warn { background: #fdf4e3; color: #a36a00; }
+.i668p-ws-frow {
+  display: grid; grid-template-columns: 148px minmax(0, 1fr); gap: 10px;
+  padding: 5px 11px; border-top: 1px solid #eef1f6; font-size: 12px;
+  align-items: baseline;
+}
+.i668p-ws-fk { color: #0b1b34; font-weight: 600; }
+.i668p-ws-fd { color: #6b7a91; line-height: 1.5; }
+
+/* 实测（只读） */
+.i668p-ws-actual { border: 1px solid #e4e9f1; border-radius: 8px; padding: 8px 11px; }
+.i668p-ws-arow {
+  display: grid; grid-template-columns: 74px 82px 74px minmax(0, 1fr); gap: 10px;
+  padding: 4px 0; font-size: 12px; align-items: baseline;
+}
+/* 绿鞋 item 包裹层：display:contents 让内部 arow/hint 回到 .i668p-ws-actual 直接布局，保持原排版 */
+.i668p-ws-aitem { display: contents; }
+.i668p-gs-loading { color: #2b6cb0; font-style: italic; opacity: .85; }
+.i668p-ws-ak { color: #7c8aa0; }
+.i668p-ws-av { color: #0b1b34; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* 招股书数据 · 超额配股权：有/无 是老板要一眼看到的事实，用色区分（有=琥珀，无=灰） */
+.i668p-ws-av.is-on { color: #a36a00; }
+.i668p-ws-av.is-off { color: #8a94a6; }
+.i668p-ws-arow.is-green { grid-template-columns: 74px 76px minmax(0, 1fr); }
+.i668p-ws-arow.is-green .i668p-ws-ad { color: #0b1b34; font-weight: 600; }
+/* 中签率行（v0.4.5）：标签 + 整体 / 甲组 / 乙组 三个数值 */
+.i668p-ws-arow.is-rate { grid-template-columns: 62px 92px 98px minmax(0, 1fr); }
+.i668p-ws-arow.is-rate .i668p-ws-av { color: #185fa5; }
+/* 工坊顶部速览里的绿鞋行 */
+.i668p-ws-kv.is-gy .i668p-ws-vv { color: #a36a00; font-weight: 700; }
+.i668p-ws-kv.is-gn .i668p-ws-vv { color: #6b7a91; }
+.i668p-ws-arow .is-up { color: #c0392b; font-weight: 700; }
+.i668p-ws-arow .is-down { color: #1a7f4b; font-weight: 700; }
+.i668p-ws-ad { color: #8a94a6; font-size: 11px; }
+
+/* 披露原文直链（v0.4.4）：站点自己挂的「招股书 PDF ↗」/ 配售结果公告，点开即核对。
+   老板要求「网址上本身就有披露，直接看」→ 把原文链接透出来，不必信我的复述。 */
+.i668p-ws-links {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-top: 8px; padding-top: 8px; border-top: 1px dashed #e4e9f1;
+}
+.i668p-ws-links-t { color: #8a94a6; font-size: 11px; }
+.i668p-ws-link {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  background: #eef4ff; border: 1px solid #cddffb;
+  color: #1755b8 !important; font-size: 11px; font-weight: 600;
+  text-decoration: none !important; line-height: 1.6; white-space: nowrap;
+}
+.i668p-ws-link:hover { background: #dfeaff; border-color: #9dc2f7; }
+
+/* 复盘表 */
+.i668p-ws-cmp { border: 1px solid #e4e9f1; border-radius: 8px; overflow: hidden; }
+.i668p-ws-crow {
+  display: grid; grid-template-columns: 118px minmax(0, 1fr) minmax(0, 1fr) 96px; gap: 10px;
+  padding: 6px 11px; border-bottom: 1px solid #eef1f6; font-size: 12px;
+  align-items: baseline;
+}
+.i668p-ws-crow:last-child { border-bottom: none; }
+.i668p-ws-ck { color: #0b1b34; font-weight: 600; }
+.i668p-ws-cv { color: #6b7a91; font-variant-numeric: tabular-nums; }
+.i668p-ws-cx { text-align: right; font-weight: 700; }
+.i668p-ws-cx.is-up { color: #c0392b; }
+.i668p-ws-cx.is-down { color: #1a7f4b; }
+
+.i668p-ws-foot {
+  margin-top: 14px; padding-top: 9px;
+  border-top: 1px solid #eef1f6;
+  color: #8a94a6; font-size: 11px; line-height: 1.5;
+}
+
+/* ----- 工坊内部响应式：一律按**面板自身宽度**（容器查询），**不看视口** -----
+   ⚠️ 这是 v0.4.5 修掉的真凶：面板是固定宽度侧栏（440~860px），原来却用 `@media (max-width:820px)`
+      按视口判断 —— 1460 视口下永远不触发，于是 440px 的面板硬排 3 列卡、文字被截断。
+      改成容器查询后，列数/列宽只取决于面板实际宽度。 */
+@container i668pws (max-width: 620px) {
+  .i668p-ws-prow { grid-template-columns: 94px minmax(0, 1fr) 74px; }
+  .i668p-ws-frow { grid-template-columns: minmax(0, 1fr); }
+  .i668p-ws-arow { grid-template-columns: 68px 74px 68px minmax(0, 1fr); }
+  .i668p-ws-arow.is-rate { grid-template-columns: 58px 80px 86px minmax(0, 1fr); }
+  .i668p-ws-crow { grid-template-columns: minmax(0, 1fr); }
+}
+/* 面板较窄时让「降级估算：未使用超购因子」这类小标签换行 ——
+   原来被 `white-space: nowrap` + ellipsis 截成「降级估算：未…」，等于没说 */
+@container i668pws (max-width: 520px) {
+  .i668p-ws-tag { white-space: normal; }
+}
+/* 极窄窗兜底：招股书数据行折成两列，说明文字独占一行 */
+@container i668pws (max-width: 430px) {
+  .i668p-ws-arow { grid-template-columns: 66px minmax(0, 1fr); }
+  .i668p-ws-arow .i668p-ws-ad { grid-column: 1 / -1; }
+  .i668p-ws-arow.is-rate { grid-template-columns: 58px minmax(0, 1fr); }
+  .i668p-ws-arow.is-rate .i668p-ws-ad { grid-column: 1 / -1; }
+}
+

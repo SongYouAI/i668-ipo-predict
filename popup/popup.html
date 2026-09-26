@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>港股打新预测 · 设置</title>
+  <style>
+    body {
+      width: 340px;
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: #0b1b34;
+      background: #f4f6fb;
+    }
+    h1 { font-size: 15px; margin: 0 0 4px; color: #0b1b34; }
+    .sub { font-size: 11px; color: #6b7a90; margin-bottom: 14px; }
+    .row { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; }
+    .row label { font-size: 13px; }
+    .row input[type="number"] { width: 90px; padding: 4px 6px; border: 1px solid #cdd6e4; border-radius: 6px; }
+    .row input[type="date"] { padding: 4px 6px; border: 1px solid #cdd6e4; border-radius: 6px; }
+    .row input[type="checkbox"] { width: 18px; height: 18px; }
+    .note { font-size: 11px; color: #6b7a90; line-height: 1.5; margin-top: 12px; border-top: 1px solid #dde4ef; padding-top: 10px; }
+    .btn { width: 100%; margin-top: 12px; background: #0b1b34; color: #f5b64a; border: none; border-radius: 8px; padding: 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn.ghost { background: #fff; color: #c0392b; border: 1px solid #e8c2bd; font-weight: 600; margin-top: 6px; padding: 8px; }
+    .btn.ghost:disabled { color: #b9c3d1; border-color: #e2e8f0; cursor: not-allowed; }
+    .ov-badge { font-size: 12px; color: #98a4b3; }
+    .ov-badge.has { color: #185fa5; font-weight: 700; }
+    .ver { font-size: 11px; color: #98a4b3; }
+  </style>
+</head>
+<body>
+  <h1>港股打新预测 · i668 增强</h1>
+  <div class="sub">列表页追加三列预测；详情页「预测工坊」看计算过程并手动改价；暗盘结束后自动切换为站点实测值</div>
+
+  <div class="row">
+    <label for="fx">A→H 汇率 (CNY→HKD)</label>
+    <input type="number" id="fx" step="0.001" min="0.8" max="1.3" value="1.09" />
+  </div>
+
+  <div class="row">
+    <label for="live">启用实时大盘行情</label>
+    <input type="checkbox" id="live" checked />
+  </div>
+
+  <div class="row">
+    <label for="sim">模拟日期 (预览用，留空=今天)</label>
+    <input type="date" id="sim" />
+  </div>
+
+  <button class="btn" id="save">保存设置</button>
+
+  <div class="row" style="margin-top:14px;border-top:1px solid #dde4ef;padding-top:10px">
+    <label>人工改价设定</label>
+    <span id="ovstat" class="ov-badge">…</span>
+  </div>
+  <button class="btn ghost" id="clear">清除全部人工改价</button>
+
+  <div class="note" id="status"></div>
+  <div class="ver">插件 v0.4.6 · 中枢优先（点估计）+ 50% 分位区间，剔除无效修正项</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+# macOS 在 FAT/ExFAT 上产生的 AppleDouble 元数据
+._*
+.DS_Store
+__MACOSX/
+
+# 编辑器 / 系统临时文件
+*.bak
+*.tmp
+*.swp
+*~
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# Node 依赖（本项目无运行时依赖，仅留以防万一）
+node_modules/

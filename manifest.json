@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "港股打新预测 · i668 增强",
+  "version": "0.4.9",
+  "description": "i668 港新工具箱增强：列表页追加三列打新预测（招股期 / 中签后 / 暗盘后），详情页新增「预测工坊」——逐项展开计算过程、列出未纳入因子，并可手动改价覆盖模型。已发生的事实（暗盘收盘 / 首日收盘）只读不给预测。不改动站点原有列序与列宽，免费、纯前端、离线加载，不上传任何数据。",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.i668.vip/*",
+    "https://qt.gtimg.cn/*",
+    "https://www1.hkexnews.hk/*",
+    "https://www.hkexnews.hk/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "vendor/pdf.min.mjs",
+        "vendor/pdf.worker.min.mjs",
+        "vendor/cmaps/*"
+      ],
+      "matches": [
+        "https://www.i668.vip/*"
+      ]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.i668.vip/stocks*"
+      ],
+      "js": [
+        "data/extras.js",
+        "content/core.js",
+        "content/list.js",
+        "content/detail.js",
+        "content/boot.js"
+      ],
+      "css": [
+        "content/styles.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "预测设置",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  }
+}
