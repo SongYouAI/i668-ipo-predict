@@ -118,6 +118,23 @@ def grab_codes():
 
 
 # ---------- ② 个股因子 ----------
+def pct_after(html, label):
+    """取「标签之后最近的一个 (xx.xx%)」。
+
+    ⚠️ 2026-10-31 实测：etnet 把数值改成了
+         <div class="card-header">首日開市升跌</div>
+         <div class="card-field ml-auto">0.000<br>(0.000%)</div>
+       旧正则要求「标签后紧跟数值」，于是**所有股都抓不到**（11 只已上市股被写成 None，
+       S3 的首日开盘实测全丢）。这里改成「标签后 300 字符内找括号百分比」，兼容新旧两种结构。
+    注意 0.000% 是**有效值**（开盘平发行价），不能用真假值判断有没有数据。
+    """
+    i = html.find(label)
+    if i < 0:
+        return None
+    m = re.search(r"\(\s*([-\+\d.]+)\s*%\s*\)", html[i:i + 300])
+    return float(m.group(1)) if m else None
+
+
 def grab_one(code, sp_names):
     n = str(int(code))
     sp, op, cl = [], None, None
@@ -126,12 +143,8 @@ def grab_one(code, sp_names):
         sp = [nm for nm in sp_names if nm in h1]      # 名称匹配，不靠猜页面结构
     h2 = fetch(ROOT + "/ipo-info.php?code=%s" % n)
     if h2:
-        m = re.search(r"首日開市升跌\s*([-\+\d.]+)\s*\(([-\+\d.]+)%\)", h2)
-        if m:
-            op = float(m.group(2))
-        m2 = re.search(r"首日收市升跌\s*([-\+\d.]+)\s*\(([-\+\d.]+)%\)", h2)
-        if m2:
-            cl = float(m2.group(2))
+        op = pct_after(h2, "首日開市升跌")
+        cl = pct_after(h2, "首日收市升跌")
     return code, {"sp": sp, "openPct": op, "closePct": cl}
 
 
@@ -145,15 +158,38 @@ def main():
         return 1
 
     codes = grab_codes()
+    # ⚠️ --quick 只抓前 30 只，**必须与已有库合并**：旧实现直接覆盖写入，
+    #    跑一次 --quick 会把另外 80+ 只的历史因子删干净（代码里看不出来，模型悄悄退化）。
+    #    全量模式同样先读旧库：用来给「这次没抓到」的股票兜底（见下面的合并逻辑）。
+    old = {}
+    if os.path.exists(OUT):
+        try:
+            raw = open(OUT, encoding="utf-8").read()
+            old = json.loads(raw[raw.index("{"):raw.rindex("}") + 1]).get("stocks") or {}
+            if quick:
+                print("   --quick：已读入现有库 %d 只，本次只刷新最新 30 只" % len(old))
+        except Exception as e:
+            print("   现有库读取失败（%s）：本次结果将覆盖写入，无兜底" % e)
     if quick:
         codes = codes[:30]
     print("② 抓取 %d 只个股的保荐人 / 首日开盘 …" % len(codes))
     sp_names = [s[0] for s in sponsors]
-    res = {}
+    res = dict(old)
     done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
         for code, v in ex.map(lambda c: grab_one(c, sp_names), codes):
-            res[code] = v
+            # 首日升跌是**既成事实**，不会「变回未知」：抓到 None（页面改版/请求失败）
+            # 时保留旧值，避免一次网络抖动把历史因子抹掉。
+            prev = old.get(code) or {}
+            res[code] = {
+                "sp": v["sp"] or (prev.get("sp") or []),
+                "openPct": v["openPct"] if v["openPct"] is not None else prev.get("openPct"),
+                "closePct": v["closePct"] if v["closePct"] is not None else prev.get("closePct"),
+                # ⚠️ pros（招股章程字段）由另一个脚本 tools/fetch-prospectus.py 写入，
+                #    本脚本不认识它。不原样带回 = 跑一次就把 117 只的招股书数据全删掉
+                #    （2026-10-31 实际发生过：--quick 一跑，pros 从 117 掉到 99）。
+                "pros": prev.get("pros"),
+            }
             done += 1
             if done % 15 == 0:
                 print("   进度 %d/%d" % (done, len(codes)), flush=True)

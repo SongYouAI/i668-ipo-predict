@@ -90,6 +90,8 @@
   function stageStateOf(key) {
     const st = P.STAGE_ORDER[ST.stage] || 0;
     const ko = P.KEY_ORDER[key];
+    // 不适用（延期 / 搁置 / 无公开发售）：三张卡统一说"不适用"，不再按阶段说待公布/未到
+    if (ST.res && ST.res.blocked) return { txt: ST.res.blocked.label, cls: "is-dim" };
     if (!st) return { txt: "无日期", cls: "is-dim" };
     // ⚠️ v0.4.8：按**时间相位**判定「当前阶段」，不再只看数据阶段（详见 core.js/stageFocus）。
     //    空窗期（招股已截止、配售结果未公布）时 ST.stage 仍是 S1，但招股期其实已经过去了，
@@ -158,9 +160,17 @@
             c.appendChild(P.mk("div", "i668p-ws-tag is-band",
               "50% 区间 · 约一半概率落在此内（非最高/最低可能）"));
           }
+          // 破发概率放在摘要层而不是只埋在计算过程里：
+          // 「区间」回答落点，「破发率」回答风险 —— 后者才是决定打不打的依据。
+          if (!ov && r && r.pb != null) {
+            c.appendChild(P.mk("div", "i668p-ws-tag " + (r.pb >= 0.5 ? "is-risk" : "is-band"),
+              "暗盘破发概率 " + Math.round(r.pb * 100) + "%" +
+              (r.pb >= 0.5 ? " · 该档整体负期望" : "")));
+          }
         } else {
+          const blk = ST.res && ST.res.blocked;
           c.appendChild(P.mk("div", "i668p-ws-price is-empty", "—"));
-          c.appendChild(P.mk("div", "i668p-ws-pct is-dim", "该阶段数据尚未公布"));
+          c.appendChild(P.mk("div", "i668p-ws-pct is-dim", blk ? "不适用（" + blk.label + "）" : "该阶段数据尚未公布"));
         }
         if (ov) {
           c.appendChild(P.mk("div", "i668p-ws-tag is-manual", "\u270e 人工设定" + (ov.note ? " · " + ov.note : "")));
@@ -256,12 +266,18 @@
   }
 
   /* ---------------------- ② 计算过程 ---------------------- */
-  // 置信度不是随便打星：它来自该超购档样本的历史离散度，必须说清来源
+  // 置信度不是随便打星：它来自该条件集样本的历史离散度，必须说清来源。
+  // ⚠️ S2 按「超购档」、S3 按「暗盘档」定星，两者依据不同，不能共用一句「超购档」。
   function confWhy(r) {
     if (r.key === "s1") return "招股期无超购数据，信息最少";
-    if (r.conf >= 3) return "该超购档样本离散度小，方向稳定";
-    if (r.conf === 2) return "该档样本离散度中等";
-    return "该档样本离散度大，仅作方向参考";
+    if (r.key === "s3") {
+      if (r.conf >= 3) return "该暗盘涨幅档样本多、偏移区间窄";
+      if (r.conf === 2) return "该暗盘档偏移区间中等宽度";
+      return "该暗盘档样本少，仅作方向参考";
+    }
+    if (r.conf >= 3) return "该超购档样本充足、离散度小，方向稳定";
+    if (r.conf === 2) return "该档样本量或离散度中等";
+    return "该档样本少或离散度大，仅作方向参考";
   }
 
   function buildProcess(wrap, key) {
@@ -269,9 +285,11 @@
     const ov = P.ovGet(ST.code, key);
     secTitle(wrap, "计算过程", P.KEY_LABEL[key] + " · " + (P.KEY_BASIS[key] || ""));
     if (!r) {
-      wrap.appendChild(P.mk("div", "i668p-ws-hint", ST.stage === "UNKNOWN"
-        ? "该股时间线日期缺失，无法判定所处阶段。"
-        : "该阶段数据尚未公布（如招股期无超购数据时无法计算）。"));
+      wrap.appendChild(P.mk("div", "i668p-ws-hint",
+        ST.res && ST.res.blocked ? ST.res.blocked.label + " · 三阶段预测不适用（原因见上方提示）"
+          : ST.stage === "UNKNOWN"
+            ? "该股时间线日期缺失，无法判定所处阶段。"
+            : "该阶段数据尚未公布（如招股期无超购数据时无法计算）。"));
       return;
     }
     if (ov) {
@@ -280,7 +298,8 @@
     if (r.provisional) {
       wrap.appendChild(P.mk("div", "i668p-ws-warn",
         "\u26a0 本次为「降级估算」：站点尚未录入公开超购倍数（S2 份量最重的因子），" +
-        "基准改取中性 0%、区间放宽到 \u00b130%、置信度 ★☆☆。此处的数字只能看方向，不能当精准区间用。"));
+        "基准改取「A+H 溢价线性模型」或「全样本兜底」，置信度封顶 ★★☆。" +
+        "此处的数字只能看方向，不能当精准区间用 —— 配售结果公布后会自动重算。"));
     }
     if (!r.provisional && ST.res && ST.res.pending && key === "s2") {
       wrap.appendChild(P.mk("div", "i668p-ws-hint",
@@ -305,15 +324,26 @@
     }
     if (r.spread != null) {
       const row = P.mk("div", "i668p-ws-prow is-sum");
-      row.appendChild(P.mk("span", "i668p-ws-pk", "展开区间"));
-      row.appendChild(P.mk("span", "i668p-ws-pd", "基准 \u00b1 " + r.spread + "%（该档样本的历史离散度）"));
+      row.appendChild(P.mk("span", "i668p-ws-pk", "区间宽度"));
+      // ⚠️ 区间**不对称**（下侧 dLo、上侧 dHi 分别取真实分位），不能简化成「基准 ± X」：
+      //    右偏分布下上沿天然比下沿宽，写成对称会把宽度说错。
+      row.appendChild(P.mk("span", "i668p-ws-pd",
+        (r.dLo != null && r.dHi != null)
+          ? "下沿 \u2212" + r.dLo + "pt、上沿 +" + r.dHi + "pt（该档真实分位，不对称）"
+          : "基准 \u00b1 " + r.spread + "%"));
       row.appendChild(P.mk("span", "i668p-ws-pv", P.pctTxt(r.loPct) + " ~ " + P.pctTxt(r.hiPct)));
       tbl.appendChild(row);
     }
     wrap.appendChild(tbl);
+    const bits = [
+      "置信度 " + P.stars(r.conf) + "（" + confWhy(r) + "）",
+      "预测区间 " + P.fmt(r.lo) + " – " + P.fmt(r.hi),
+    ];
+    // 破发概率只对 S2（暗盘）有意义：S3 的标的已经发生，破不破发已成事实
+    if (r.pb != null) bits.push("该档暗盘破发概率 " + Math.round(r.pb * 100) + "%");
     const foot = P.mk("div", "i668p-ws-hint",
-      "置信度 " + P.stars(r.conf) + "（" + confWhy(r) + "）；预测区间 " + P.fmt(r.lo) + " – " + P.fmt(r.hi) +
-      "。样本：2024–2026 共 106 只港股新股（tools/backtest.js 可复跑）。");
+      bits.join("；") +
+      "。样本：2026-01 起 115 只港股新股（带暗盘实测；2026-07 后按月分层重标，tools/backtest.js 可复跑）。");
     wrap.appendChild(foot);
   }
 
@@ -328,10 +358,31 @@
      —— 对：i668 接口顶层就给了 `prospectus_url`（117/117）与 `allotment_pdf_url`（109/117），
      详情页时间线里的「招股书 PDF ↗」就是前者。这里原样透出，你自己能核对上面的数字，
      不用信我的复述。 */
+  /* 失败态文案：把「解析失败」这个笼统结论，拆成「为什么 + 你能做什么」。
+     老板截图问的正是「招股书解析失败是什么意思」—— 界面自己必须讲清楚，
+     否则用户只会以为插件坏了，而实际是浏览器不允许跨域直读披露易 PDF。 */
+  function gsFailInfo(src, kind, err) {
+    if (src === "noUrl") {
+      return { tag: "无链接", short: "接口未提供招股章程",
+        long: "该股接口未提供招股章程链接，无法解析超额配股权。" };
+    }
+    if (kind === "http") {
+      return { tag: "取不到", short: "披露易返回错误",
+        long: "港交所披露易返回异常（" + (err || "未知") + "），可能是文件尚未同步或临时故障，24 小时后自动重试。" };
+    }
+    if (kind === "parse") {
+      return { tag: "解析失败", short: "PDF 抽不出条款",
+        long: "已取得招股章程 PDF，但未能抽取出超额配股权条款（扫描版或版式变化）。请点下方「招股章程 PDF」核对原文。" };
+    }
+    return { tag: "跨域受限", short: "浏览器不允许直读",
+      long: "浏览器不允许本站直接读取港交所披露易的 PDF（对方只放行自家域名），因此无法在线解析。" +
+        "请点下方「招股章程 PDF」查看原文；内置因子库已收录的股票仍显示既有结论。" };
+  }
   /* 绿鞋：把「一行 + 一段说明」包成可替换的 item，供同步渲染与异步兜底共用 */
   function greenShoeItem(g) {
     const item = P.mk("div", "i668p-ws-aitem");
     const r = P.mk("div", "i668p-ws-arow is-green");
+    const fail = g && g.fail ? gsFailInfo(g.src, g.kind, g.error) : null;
     r.appendChild(P.mk("span", "i668p-ws-ak", "超额配股权"));
     if (g && g.has != null) {
       r.appendChild(P.mk("span", "i668p-ws-av " + (g.has ? "is-on" : "is-off"), g.has ? "有（绿鞋）" : "无"));
@@ -343,6 +394,9 @@
           : "招股章程未载明超额配股权"));
     } else if (g && g.placeholder) {
       r.appendChild(P.mk("span", "i668p-ws-av i668p-gs-loading", "解析中…（从披露易招股章程实时解析）"));
+    } else if (fail) {
+      r.appendChild(P.mk("span", "i668p-ws-av is-off", fail.tag));
+      r.appendChild(P.mk("span", "i668p-ws-ad", fail.short));
     } else {
       r.appendChild(P.mk("span", "i668p-ws-av", g && g.msg ? g.msg : "—"));
     }
@@ -357,7 +411,11 @@
           : "无绿鞋 = 上市后没有官方托价机制，首日跌破发行价时缺少承销商买入支撑，波动通常更大。")));
     } else if (g && g.placeholder) {
       item.appendChild(P.mk("div", "i668p-ws-hint",
-        "新上市股的内置绿鞋数据尚未收录，正用浏览器从披露易招股章程现场解析超额配股权（仅此一次，结果缓存到本机）。"));
+        "内置绿鞋库尚未收录这只，正在浏览器内读取披露易招股章程（只取前 80 页所需的片段，" +
+        "不必把整份 20MB+ 拉完；实测 23.7MB / 476 页的章程约 6–15 秒；" +
+        "仅此一次，结果缓存到本机）。"));
+    } else if (fail) {
+      item.appendChild(P.mk("div", "i668p-ws-hint", fail.long));
     }
     return item;
   }
@@ -549,10 +607,14 @@
     if (ST.stage) {
       // 阶段 chip 也随时间走：空窗期 ≠ 招股期，必须分开说。否则 chip 说「招股期 S1」、
       // 状态行说「空窗期」、卡片 badge 又说「当前阶段」—— 三处各说各话（老板截图即此）。
+      // 不适用股优先说真实状态：延期股的日期已过，按阶段会说成「已上市」，与事实相反。
+      const blk = ST.res && ST.res.blocked;
       const ph = ST.stock ? P.phaseOf(ST.stock, P.todayDate()) : null;
-      tl.appendChild(ph === "AWAIT"
-        ? P.mk("span", "i668p-ws-stage is-await", "空窗期 · 等待配售结果")
-        : P.mk("span", "i668p-ws-stage", P.STAGE_NAME[ST.stage] || ST.stage));
+      tl.appendChild(blk
+        ? P.mk("span", "i668p-ws-stage is-await", blk.label)
+        : ph === "AWAIT"
+          ? P.mk("span", "i668p-ws-stage is-await", "空窗期 · 等待配售结果")
+          : P.mk("span", "i668p-ws-stage", P.STAGE_NAME[ST.stage] || ST.stage));
     }
     head.appendChild(tl);
 
@@ -578,9 +640,13 @@
     const ipo = P.num(ST.stock.ipo_price);
     const gs = P.greenShoeOf(ST.code, ST.stock);
     const facts = P.mk("div", "i668p-ws-facts");
-    kv(facts, "发行价", ipo != null ? P.fmt(ipo) + " 港元" : "—");
+    kv(facts, "发行价", (ipo != null && ipo > 0) ? P.fmt(ipo) + " 港元" : "—");
     kv(facts, "每手", ST.stock.lot_size ? ST.stock.lot_size + " 股" : (ST.stock.shares_per_lot ? ST.stock.shares_per_lot + " 股" : "—"));
-    kv(facts, "状态", P.stageNote(ST.stock, P.todayDate()));
+    const blkS = ST.res && ST.res.blocked;
+    const lsS = String(ST.stock.listing_status || "");
+    kv(facts, "状态", blkS
+      ? (blkS.k === "intro" ? blkS.label + "（介绍上市）" : blkS.label + (lsS ? "（站点状态 " + lsS + "）" : ""))
+      : P.stageNote(ST.stock, P.todayDate()));
     kv(facts, "公开发售超购", ST.stock.public_offer_subscription_multiple != null ? ST.stock.public_offer_subscription_multiple + " 倍" : "未公布");
     // 绿鞋放在速览区最显眼处（老板明确要求"必须展示"）：它是上市后 30 天内唯一的官方托价机制
     // 内置没有时先放占位（data-i668p-gs=facts），待 ensureGreenShoe 异步解析后回填
@@ -597,16 +663,23 @@
 
     secTitle(body, "三阶段预测", "招股期 → 中签后 → 暗盘后");
     buildStageCards(body);
+    if (ST.res && ST.res.blocked) {
+      body.appendChild(P.mk("div", "i668p-ws-warn", "\u26a0 " + ST.res.blocked.why));
+    }
     if (ST.msg) body.appendChild(P.mk("div", "i668p-ws-msg", ST.msg));
     // 空窗期说明：S2 是降级估算，必须讲明白为什么、缺了什么，否则数字会被误读
     if (ST.res && ST.res.pending) {
-      const sp = ST.res.s2 && ST.res.s2.spread != null ? ST.res.s2.spread : 30;
-      const ahd = P.ahAdj(ST.stock, P.CACHE && P.CACHE.ctx ? P.CACHE.ctx : { ah: {} });
+      const r2 = ST.res.s2;
+      const c2 = P.CACHE && P.CACHE.ctx ? P.CACHE.ctx : { ah: {} };
+      const ahp = P.ahPrem(ST.stock, c2);
       body.appendChild(P.mk("div", "i668p-ws-warn",
         "\u26a0 当前处于「空窗期」：招股已截止，但配售结果（含公开超购倍数）在站点尚未公布 —— " +
-        "S2「中签后预测」因此是「降级估算」（基准按中性 0%，区间放宽到 \u00b1" + sp + "%，未使用超购因子）。" +
-        (ahd ? "由于该股是 A+H（A 股较发行价溢价 " + P.pctTxt(ahd.prem) + "），已按折价把中枢上移并相应收窄区间。" : "") +
-        "配售结果一公布，本页会自动按完整模型重算。"));
+        "S2「中签后预测」因此是「降级估算」，未使用超购因子：" +
+        (ahp != null
+          ? "按 A+H 溢价 " + P.pctTxt(ahp) + " 用线性模型折算中枢（" + P.ahBasis(ST.stock, c2) + "）"
+          : "无 A+H 参照，改用全样本兜底中枢") +
+        (r2 ? "，区间 " + P.pctTxt(r2.loPct, 1) + " ~ " + P.pctTxt(r2.hiPct, 1) : "") +
+        "。配售结果一公布，本页会自动按完整模型重算。"));
     }
 
     // 招股书数据紧随预测之后：绿鞋 / 基石是"看首日必须知道"的事实，不能埋在页面底部
@@ -648,14 +721,16 @@
             : "无";
           fr.className = "i668p-ws-kv " + (gs.has ? "is-gy" : "is-gn");
         } else {
-          v.textContent = src === "noUrl" ? "无链接" : (src === "failed" || src === "error" ? "解析失败" : "—");
+          v.textContent = gsFailInfo(src, out && out.kind, out && out.error).tag;
         }
       }
     }
     const pr = ROOT && ROOT.querySelector('[data-i668p-gs="prosp"]');
     if (pr) {
       pr.innerHTML = "";
-      pr.appendChild(greenShoeItem(gs && gs.has != null ? gs : (gs ? null : { msg: src === "noUrl" ? "无招股章程链接，无法解析" : (src === "failed" || src === "error" ? "招股章程解析失败" : "暂无绿鞋数据") })));
+      pr.appendChild(greenShoeItem(
+        gs && gs.has != null ? gs : { fail: true, src: src, kind: out && out.kind, error: out && out.error }
+      ));
     }
   }
 

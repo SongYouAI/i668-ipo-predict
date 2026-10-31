@@ -458,6 +458,8 @@ td[data-pred="s1"] { border-left: 2px solid #cfd8e3 !important; }
 /* 降级估算（空窗期 S2 / 站点未录入超购倍数）：琥珀色，与「人工设定」蓝、「当前阶段」金区分开 */
 .i668p-ws-tag.is-prov { background: #fdf4e3; color: #a36a00; font-weight: 600; }
 .i668p-ws-state.is-prov { color: #a36a00; font-weight: 700; }
+/* 破发概率 ≥50%：红色。这是「该不该打」的负面结论，必须比中性的区间标签更醒目 */
+.i668p-ws-tag.is-risk { background: #fdecea; color: #b42318; font-weight: 600; }
 .i668p-ws-state { font-size: 11px; margin-top: 1px; }
 .i668p-ws-state.is-cur { color: #a36a00; font-weight: 700; }
 .i668p-ws-state.is-past { color: #8a94a6; }

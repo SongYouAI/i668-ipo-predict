@@ -1,0 +1,18 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "access-control-allow-origin", "operation": "set", "value": "*" },
+        { "header": "access-control-expose-headers", "operation": "set",
+          "value": "content-range, content-length, accept-ranges" }
+      ]
+    },
+    "condition": {
+      "requestDomains": ["hkexnews.hk"],
+      "resourceTypes": ["xmlhttprequest", "other"]
+    }
+  }
+]

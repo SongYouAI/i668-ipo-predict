@@ -9,6 +9,9 @@ __MACOSX/
 *.swp
 *~
 
+# Chrome 加载 DNR 静态规则时自动生成的索引缓存（每次启用扩展都会重建）
+_metadata/
+
 # Python 缓存
 __pycache__/
 *.pyc

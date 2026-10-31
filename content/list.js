@@ -256,6 +256,14 @@
     const ov = P.ovGet(code, key);
     td.__i668p = { code: code, key: key, stage: stage, stock: stock, res: res, ov: ov };
 
+    // 不适用（延期 / 搁置 / 无公开发售）：这不是"待公布"，是这件事根本不会发生 ——
+    // 必须明确区分，否则一行「待公布」会让人以为过两天就有数。
+    // 放在「无日期」之前：介绍上市本就没有招股/暗盘日期，说成「无日期」会误导。
+    if (res && res.blocked) {
+      td.classList.add("is-inactive");
+      td.title = res.blocked.why;
+      return putText(td, res.blocked.label, "i668p-invalid");
+    }
     if (!st) { td.classList.add("is-inactive"); return putText(td, "无日期", "i668p-invalid"); }
     // ⚠️ v0.4.8：「当前 / 已过」按**时间相位**判定，不只看数据阶段（详见 core.stageFocus）。
     //    空窗期（招股已截止、配售结果未公布）时 stage 仍是 S1，但招股期其实已经过去 ——

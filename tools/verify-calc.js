@@ -26,8 +26,8 @@
     "sponsorAdj","sponsorStats","sponsorBaseline","exOf","factorCatalog","ovGet","ovSet","ovDel","ovAll",
     "fmt","pctTxt","stars","mk","clear","num","clamp","warnOnce","on","emit",
     "allotmentPublished","phaseOf","PHASE","greenShoeOf","cornerstoneOf",
-    "ahAdj","ahAnchor","allotmentRate","AH_K","AH_CAP",
-    "overBucket","OVER_BUCKETS","ahBucket","AH_BUCKETS","FLAT",
+    "ahPrem","ahLine","AH_LIN","ahBasis","allotmentRate",
+    "overBucket","OVER_BUCKETS","FLAT",
     "KEY_LABEL","KEY_BASIS","STAGE_NAME","STAGE_ORDER","KEY_ORDER","COLS","CFG"];
   const miss = need.filter(k => P[k] === undefined);
   if (miss.length) errs.push(["导出缺失", miss.join(",")]);
@@ -70,21 +70,40 @@
       if (g.has && g.pct != null && g.shares == null) errs.push([code + "/green", "有占比无股数"]);
     }
 
-    // ⓪e A+H 折价档必须生效（v0.4.6 改）：
-    //    超购缺失（降级）且有 A 股溢价时，S2 的中枢必须来自 **A+H 折价档的中位数**，
-    //    步骤里出现「A+H 折价档中枢」，且区间必须落在该档 [P25,P75] 上（不是对称 ±spread）。
-    //    —— 老板报「区间那么大等于没预测」的修复点，防重构又改回对称 sd 口径。
-    const ahd = P.ahAdj(s, P.CACHE.ctx);
-    if (ahd) {
+    // ⓪e A+H 线性模型必须生效（v0.5.1 改：原「折价三档」已被线性标定取代）：
+    //    超购缺失（降级）且有 A 股溢价时，S2 的中枢必须等于 ahLine(溢价).med，
+    //    区间必须落在 [中枢−dLo, 中枢+dHi] 上（不是对称 ±spread）。
+    const ahp = P.ahPrem(s, P.CACHE.ctx);
+    if (ahp != null) {
       nAH++;
       if (res.s2) {
-        const st = (res.s2.steps || []).find((x) => x.k === "A+H 折价档中枢");
+        const st = (res.s2.steps || []).find((x) => x.k === "A+H 线性中枢");
         if (res.s2.provisional) {
-          const b = P.ahBucket(ahd.prem);
-          if (!st) errs.push([code + "/ah", "降级+A+H 时 S2 缺少「A+H 折价档中枢」", ahd.prem]);
-          else if (Math.abs(st.v - b.med) > 0.011) errs.push([code + "/ah", "中枢≠折价档中位数", st.v, b.med]);
+          const cal = P.ahLine(ahp);
+          if (!st) errs.push([code + "/ah", "降级+A+H 时 S2 缺少「A+H 线性中枢」", ahp]);
+          else if (Math.abs(st.v - cal.med) > 0.011) errs.push([code + "/ah", "中枢≠线性模型中枢", st.v, cal.med]);
           if (res.s2.dLo == null || res.s2.dHi == null) errs.push([code + "/ah", "缺少分位半宽 dLo/dHi"]);
+          if (Math.abs(res.s2.loPct - cal.lo) > 0.011 || Math.abs(res.s2.hiPct - cal.hi) > 0.011)
+            errs.push([code + "/ah", "S2 区间≠线性模型区间", res.s2.loPct, res.s2.hiPct, cal.lo, cal.hi]);
         }
+      }
+    }
+    // ⓪f 溢价口径守卫（v0.5.3）—— 溢价必须来自「招股截止日收盘价」。
+    //    这是被真实踩过的坑：用实时价那版，40 只 A+H 里 39 只漂移、中位 −40pt、
+    //    最大 −120pt（02249 晶合集成 +102.8% → −17.8%），模型看着没问题、数字天天变。
+    //    此断言把「已过截止日绝不用实时价」和「放弃时不许留残值」锁死。
+    if (s.is_ah_share && s.a_share_code && P.CACHE.ctx && P.CACHE.ctx.ahMeta) {
+      const m = P.CACHE.ctx.ahMeta[s.a_share_code];
+      const se = s.subscription_end_date;
+      const td = (() => { const d = P.todayDate(); return d.getFullYear() + "-" +
+        String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
+      if (m) {
+        if (m.src === "live" && se && se < td)
+          errs.push([code + "/ahprem", "已过招股截止日却用实时价算溢价", se, m.c]);
+        if (m.src === "none" && P.CACHE.ctx.ah[s.a_share_code] != null)
+          errs.push([code + "/ahprem", "标记为放弃却仍留着溢价值"]);
+        if ((m.src === "lib" || m.src === "hist") && (!m.d || (se && m.d > se)))
+          errs.push([code + "/ahprem", "基准日晚于招股截止日（用了未来数据）", m.d, se]);
       }
     }
     // 中签率（只展示项）口径自检：有中签人数时不得算出 >100% 或负数
@@ -161,7 +180,7 @@
 
   const head = "股票 " + nStock + " 只 / 阶段 " + nStage + " 个 / 空窗期 " + nAwait + " 个(预估 " + nProv +
     ") / 保荐人因子 " + nSp + " / 首日开盘 " + nOpen + " / 绿鞋已抓 " + nGreen +
-    " / A+H 折价档 " + nAH + " / 中签率 " + nRate + " / 错误 " + errs.length + " 处" +
+    " / A+H 溢价 " + nAH + " / 中签率 " + nRate + " / 错误 " + errs.length + " 处" +
     (nAct ? "\nS2 区间：平均宽 " + (wSum / nAct).toFixed(1) + " pt，实测命中 " +
       (nHit / nAct * 100).toFixed(1) + "%（n=" + nAct + "，名义 50%）" : "");
   return head + (errs.length
