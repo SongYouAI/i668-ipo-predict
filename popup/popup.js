@@ -115,12 +115,21 @@ function vcmp(a, b) {
 }
 
 // 代码版本落后时给一条能直接点的地址。
-// 版本号只保留数字与点，避免远程内容污染 DOM（哪怕来源是自己仓库也按不可信处理）
+// 版本号只接受「数字 + 点」，含任何其他字符一律视为无效 —— 不能只是把杂字剔掉：
+// 实测 "<img ...>9.9" 剔完会变成 "9.9"，反而误报「有新版本 v9.9」。
+// v0.6.3 修的就是这个假警报。
+const VRE = /^[0-9]+(\.[0-9]+)*$/;
+
 function showCodeWarn(p) {
   const el = document.getElementById("codewarn");
   const localV = chrome.runtime.getManifest().version;
-  const remoteV = String(p && p.appVersion ? p.appVersion : "").replace(/[^0-9.]/g, "");
-  if (!remoteV || vcmp(remoteV, localV) <= 0) { el.hidden = true; return; }
+  const raw = String(p && p.appVersion ? p.appVersion : "").trim();
+  const remoteV = VRE.test(raw) ? raw : "";
+  if (!remoteV || vcmp(remoteV, localV) <= 0) {
+    el.hidden = true;
+    el.textContent = "";   // 一并清空，别把上一轮的文案留在 DOM 里
+    return;
+  }
   el.hidden = false;
   el.innerHTML =
     "插件代码有新版本 <b>v" + remoteV + "</b>（你现在 v" + localV + "）。" +
