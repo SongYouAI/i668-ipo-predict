@@ -85,12 +85,47 @@ document.addEventListener("DOMContentLoaded", () => {
       content/core.js 的 validRemote()。popup 写进去的坏数据不会污染模型：
       页面加载时 applyRemote 会整份拒绝，继续用内置数据。 */
 const REMOTE_KEY = "i668p.remote";
+
+/* v0.6.2：代码包下载页 —— 用 Release 固定别名，不是仓库首页。
+   为什么不用仓库地址：仓库首页要教人找绿色 Code 按钮，解压出来还带
+   tools/ screenshots/ 和一层 -main 目录，小白极易选错层级。
+   releases/latest/download/<文件> 是 GitHub 的永久别名：
+   永远指向「最新一个 Release 的该文件」，所以朋友收藏一次地址，
+   以后每次点都是最新代码包，我换版本也不用通知他改链接。 */
+const DL_URL = "https://github.com/SongYouAI/i668-ipo-predict/releases/latest/download/i668-ipo-predict.zip";
+
 let dataVer = null;
 
 function setHint(id, msg, cls) {
   const el = document.getElementById(id);
   el.textContent = msg;
   el.className = "hint" + (cls ? " " + cls : "");
+}
+
+// 语义化版本比较：a 比 b 新返回 >0
+function vcmp(a, b) {
+  const pa = String(a || "").split(".");
+  const pb = String(b || "").split(".");
+  for (let i = 0; i < 3; i++) {
+    const x = parseInt(pa[i], 10) || 0;
+    const y = parseInt(pb[i], 10) || 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+// 代码版本落后时给一条能直接点的地址。
+// 版本号只保留数字与点，避免远程内容污染 DOM（哪怕来源是自己仓库也按不可信处理）
+function showCodeWarn(p) {
+  const el = document.getElementById("codewarn");
+  const localV = chrome.runtime.getManifest().version;
+  const remoteV = String(p && p.appVersion ? p.appVersion : "").replace(/[^0-9.]/g, "");
+  if (!remoteV || vcmp(remoteV, localV) <= 0) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML =
+    "插件代码有新版本 <b>v" + remoteV + "</b>（你现在 v" + localV + "）。" +
+    "数据已是最新，但新功能要重新下载一次安装包：<br>" +
+    '<a href="' + DL_URL + '" target="_blank" rel="noreferrer">' + DL_URL + "</a>";
 }
 
 function renderVer() {
@@ -117,40 +152,65 @@ function renderData() {
 function checkUpdate() {
   const btn = document.getElementById("upd");
   btn.disabled = true;
+  document.getElementById("reload").hidden = true;
+  document.getElementById("codewarn").hidden = true;
   setHint("updmsg", "检查中…");
-  chrome.storage.local.get([REMOTE_KEY], (r) => {
-    const rec = r[REMOTE_KEY];
-    const curV = rec && rec.p ? rec.p.v : null;
-    // 交给 background 解析「最新 commit → CDN 地址」，
-    // 否则会撞上 jsDelivr 对分支引用的 12 小时缓存（详见 background.js）
-    chrome.runtime.sendMessage({ type: "i668p.remote" }, (resp) => {
-      if (chrome.runtime.lastError || !resp || !resp.ok || !resp.text) {
-        setHint("updmsg", "检查失败：网络不通。不影响使用，当前用的仍是本地数据。", "bad");
-        btn.disabled = false;
-        return;
-      }
-      let p = null;
-      try { p = JSON.parse(resp.text); } catch (e) { p = null; }
-      const okShape = p && typeof p.v === "string" && p.params && p.data &&
-        p.data.extras && p.data.extras.stocks &&
-        Object.keys(p.data.extras.stocks).length >= 20;
-      if (!okShape) {
-        setHint("updmsg", "拿到的数据不完整，已忽略（继续使用现有数据）", "bad");
-        btn.disabled = false;
-        return;
-      }
-      if (curV && p.v === curV) {
-        setHint("updmsg", "已是最新：" + p.v, "ok");
-        btn.disabled = false;
-        return;
-      }
-      const o = {};
-      o[REMOTE_KEY] = { at: Date.now(), p: p };
-      chrome.storage.local.set(o, () => {
+
+  // 先记下当前标签页：更新成功后可以直接帮用户刷新它，省得他自己回去找
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const t = tabs && tabs[0];
+    const tabId = t && /^https:\/\/www\.i668\.vip\//.test(t.url || "") ? t.id : null;
+
+    chrome.storage.local.get([REMOTE_KEY], (r) => {
+      const rec = r[REMOTE_KEY];
+      const curV = rec && rec.p ? rec.p.v : null;
+
+      // 交给 background 解析「最新 commit → CDN 地址」，
+      // 否则会撞上 jsDelivr 对分支引用的 12 小时缓存（详见 background.js）
+      chrome.runtime.sendMessage({ type: "i668p.remote" }, (resp) => {
+        if (chrome.runtime.lastError || !resp || !resp.ok || !resp.text) {
+          setHint("updmsg", "检查失败：网络不通。不影响使用，当前用的仍是本地数据。", "bad");
+          btn.disabled = false;
+          return;
+        }
+        let p = null;
+        try { p = JSON.parse(resp.text); } catch (e) { p = null; }
+        const okShape = p && typeof p.v === "string" && p.params && p.data &&
+          p.data.extras && p.data.extras.stocks &&
+          Object.keys(p.data.extras.stocks).length >= 20;
+        if (!okShape) {
+          setHint("updmsg", "拿到的数据不完整，已忽略（继续使用现有数据）", "bad");
+          btn.disabled = false;
+          return;
+        }
+
+        // 代码版本先判：数据没变，也可能代码已经落后了
+        showCodeWarn(p);
+
         const n = Object.keys(p.data.extras.stocks).length;
-        setHint("updmsg", "已更新到 " + p.v + "（因子库 " + n + " 只）。回 i668 页面刷新即可生效。", "ok");
-        renderData();
-        btn.disabled = false;
+
+        if (curV && p.v === curV) {
+          setHint("updmsg", "数据已是最新：" + p.v + "（因子库 " + n + " 只）", "ok");
+          btn.disabled = false;
+          return;
+        }
+
+        const o = {};
+        o[REMOTE_KEY] = { at: Date.now(), p: p };
+        chrome.storage.local.set(o, () => {
+          renderData();
+          if (tabId != null) {
+            // 已经在 i668 页面上：给一个「一键刷新」，点完这个弹窗自然关掉
+            setHint("updmsg", "已更新到 " + p.v + "（因子库 " + n + " 只）", "ok");
+            const rb = document.getElementById("reload");
+            rb.hidden = false;
+            rb.onclick = () => { chrome.tabs.reload(tabId); };
+          } else {
+            setHint("updmsg",
+              "已更新到 " + p.v + "（因子库 " + n + " 只）。打开 i668 页面即生效。", "ok");
+          }
+          btn.disabled = false;
+        });
       });
     });
   });

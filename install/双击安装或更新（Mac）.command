@@ -27,7 +27,7 @@ say "=============================================================="
 
 # ---------- 1. 先判断：是不是已经解压在扩展目录里了 ----------
 # 场景：作者把整个 zip 发给使用者，解压后双击本脚本 —— 这时文件已经在位，
-# 再去下载 110MB 纯属浪费，直接跳到"把路径放进剪贴板"。
+# 再去下载纯属浪费，直接跳到"把路径放进剪贴板"。
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PARENT="$(dirname "$HERE")"
 ZIP=""
@@ -47,9 +47,9 @@ if [ "$SKIP_EXTRACT" = "0" ]; then
   done
 
   if [ -z "$ZIP" ]; then
-    say "本地没找到 i668*.zip，正在从 GitHub 下载（约 110MB，网速慢可能要几分钟）…"
+    say "本地没找到 i668*.zip，正在从 GitHub 下载（约 1.5MB，通常十几秒）…"
     curl -L --progress-bar --max-time 900 -o /tmp/i668-install.zip \
-      "https://codeload.github.com/SongYouAI/i668-ipo-predict/zip/refs/heads/main"
+      "https://github.com/SongYouAI/i668-ipo-predict/releases/latest/download/i668-ipo-predict.zip"
     if [ ! -s /tmp/i668-install.zip ] || [ "$(wc -c < /tmp/i668-install.zip)" -lt 100000 ]; then
       say "❌ 下载失败或文件不完整。"
       say "   办法：让作者把 i668 安装包（zip）直接发给你，放到「下载」文件夹，"

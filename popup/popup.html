@@ -34,6 +34,12 @@
     .hint { font-size: 11px; color: #6b7a90; line-height: 1.5; margin-top: 6px; }
     .hint.ok { color: #1a7f4b; }
     .hint.bad { color: #c0392b; }
+    /* v0.6.2：代码版本落后提醒（数据能自更新、代码不能，必须显式告知） */
+    .hint.warn {
+      color: #8a5a00; background: #fff8e6; border: 1px solid #f0dcae;
+      border-radius: 6px; padding: 6px 8px; margin-top: 8px; word-break: break-all;
+    }
+    .hint.warn a { color: #185fa5; }
   </style>
 </head>
 <body>
@@ -72,8 +78,10 @@
       <label>因子库 / 模型参数</label>
       <span id="datav" class="ov-badge">…</span>
     </div>
-    <button class="btn soft" id="upd">检查数据更新</button>
+    <button class="btn soft" id="upd">更新数据</button>
+    <button class="btn soft" id="reload" hidden>刷新页面即刻生效</button>
     <div class="hint" id="updmsg">新股与重标定会自动同步，无需重装扩展</div>
+    <div class="hint warn" id="codewarn" hidden></div>
   </div>
 
   <div class="sec">

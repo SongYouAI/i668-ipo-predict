@@ -35,8 +35,8 @@ for %%F in ("%~dp0i668*.zip" "%~dp0..\i668*.zip" "%USERPROFILE%\Downloads\i668*.
 )
 
 if not defined ZIP (
-  echo 本地没找到 i668*.zip，正在从 GitHub 下载（约 110MB，网速慢可能要几分钟）...
-  powershell -NoProfile -Command "try { Invoke-WebRequest -Uri 'https://codeload.github.com/SongYouAI/i668-ipo-predict/zip/refs/heads/main' -OutFile '%TEMP%\i668-install.zip' -UseBasicParsing } catch { exit 1 }"
+  echo 本地没找到 i668*.zip，正在从 GitHub 下载（约 1.5MB，通常十几秒）...
+  powershell -NoProfile -Command "try { Invoke-WebRequest -Uri 'https://github.com/SongYouAI/i668-ipo-predict/releases/latest/download/i668-ipo-predict.zip' -OutFile '%TEMP%\i668-install.zip' -UseBasicParsing } catch { exit 1 }"
   if not exist "%TEMP%\i668-install.zip" (
     echo.
     echo [X] 下载失败。

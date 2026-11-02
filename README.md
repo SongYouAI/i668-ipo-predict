@@ -6,8 +6,16 @@
 
 ## 安装（离线加载，免费）
 
+**固定下载地址 —— 永远指向最新代码包，发给别人只需这一个链接（收藏即可）：**
+
+<https://github.com/SongYouAI/i668-ipo-predict/releases/latest/download/i668-ipo-predict.zip>
+
+> `releases/latest/download/` 是 GitHub 的永久别名：我发新版本时它会自动指向新包，
+> 使用者不用通知、不用换链接，每次点同一个地址都是最新。下载的是**干净分发包**，
+> 不含 `tools/`、`screenshots/`、`.git` 等开发文件。
+
 1. 打开 Chrome / Edge 的扩展管理页（`chrome://extensions` 或 `edge://extensions`），开启「开发者模式」。
-2. 点「加载已解压的扩展程序」，选择本仓库目录（`i668-ipo-predict/`）。
+2. 点「加载已解压的扩展程序」，选择本仓库目录（或解压出来的 `i668-ipo-predict/` 目录，必须是含 `manifest.json` 的那一层）。
 3. 访问 https://www.i668.vip/stocks ，右下角出现浮条即生效。
 
 > 改过代码须在扩展管理页点「重新加载」；**改过 `manifest.json` 必须重新加载**（浏览器只在启动时读一次清单）。
@@ -20,9 +28,14 @@
 
 因子库（129 只）与模型参数（超购七档 / S3 偏移 / A+H 线性 / 基石权重 / 汇率）**不在代码里**，
 而是运行时从 `dist/latest.json`（68KB）拉取，缓存到本机。改数据、重标定参数后，
-使用者**不用重新安装**，下次打开页面自动用上（每 6 小时检查一次，也可在插件图标里点「检查数据更新」）。
+使用者**不用重新安装**，下次打开页面自动用上（每 6 小时检查一次）。
 
-只有改 `content/*.js` 算法时才需要重新分发。详见 [TECHNICAL.md](TECHNICAL.md) 的数据架构章节。
+想立刻拿到最新：点插件图标 →「更新数据」。若当前正开着 i668 页面，面板会多出一个
+「刷新页面即刻生效」，点一下就完成 —— 这是**一键**，不用重装、不用碰 `chrome://extensions`。
+
+只有改 `content/*.js` 算法时才需要重新分发代码。**代码更新没有静默通道**（不在应用商店），
+但插件会自动发现并提醒：点「更新数据」时若远端 `appVersion` 高于本地，面板直接显示新版本号
+和下载地址 —— 使用者不会在不知情的情况下一直用旧版。详见 [TECHNICAL.md](TECHNICAL.md) 的数据架构章节。
 
 ## 怎么用
 
@@ -160,6 +173,7 @@ i668-ipo-predict/
 
 | 版本 | 要点 |
 |---|---|
+| **0.6.2** | **分发链路收口**：popup 的「检查数据更新」改为「更新数据」，更新后若正开着 i668 页面则直接给「刷新页面即刻生效」一键按钮（`chrome.tabs.reload`），把原本「更新完再自己回去刷新」的三步压成一步。补掉一个静默漏洞：**远端 `appVersion` 高于本地时显示代码新版本与下载地址**（此前数据在更新、代码却一直是旧版，使用者无从得知）。下载地址统一为 `releases/latest/download/` 永久别名 —— 发新版本不用再改链接或重新通知 |
 | **0.6.1** | 数据与算法分离的收尾：加 `background.js`，用 **GitHub 最新 commit sha 拼 jsDelivr 地址**，绕开分支引用 12 小时缓存 —— 实测推送后 3.7 秒即可拿到新版（直接请求 `@main` 仍返回旧版）。remote 请求统一走 background，顺带摆脱页面 CORS 约束 |
 | **0.6.0** | **数据与算法分离**：因子库与模型参数外置为 `dist/latest.json`（68KB），运行时拉取并缓存，改数据不用重装扩展。`core.js` 新增 `validRemote()` 严格校验 + `applyRemote()` 就地覆盖；`EX`/`AHC` 改 `let` 支持整体替换；`CS_BASE/K/CAP` 收进对象 `CS`。踩坑：`JSON.stringify(Infinity) === "null"`，末档必须在应用时还原。popup 新增数据版本展示、检查更新、一键复制诊断信息反馈；新增 `tools/build-remote.mjs`（7 项自检）与 `install/`（Mac/Windows 一键脚本 + 小白说明） |
 | **0.5.5** | 绿鞋兜底改**按需 Range 下载**：不再把整份 20MB+ 章程拉完再解析，只取前 80 页所需的块。同一份 23.7MB / 476 页章程三轮交替实测：全量 14.1s / 22.6MB → Range 6.1s / 6.6MB（**2.3×、省 71% 流量**，绿鞋结论一致）。DNR 规则补 `access-control-expose-headers`（pdf.js 靠 Content-Range 推总大小）；Range 失败自动退回全量。修正详情页「解析中」文案里未实测的耗时承诺 |
