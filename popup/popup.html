@@ -27,6 +27,13 @@
     .ov-badge { font-size: 12px; color: #98a4b3; }
     .ov-badge.has { color: #185fa5; font-weight: 700; }
     .ver { font-size: 11px; color: #98a4b3; }
+    /* v0.6.0：数据更新与反馈入口 */
+    .sec { margin-top: 14px; border-top: 1px solid #dde4ef; padding-top: 10px; }
+    .btn.soft { background: #fff; color: #185fa5; border: 1px solid #c3d6ea; font-weight: 600; margin-top: 8px; padding: 8px; }
+    .btn.soft:hover { background: #f0f6fc; }
+    .hint { font-size: 11px; color: #6b7a90; line-height: 1.5; margin-top: 6px; }
+    .hint.ok { color: #1a7f4b; }
+    .hint.bad { color: #c0392b; }
   </style>
 </head>
 <body>
@@ -57,7 +64,24 @@
   <button class="btn ghost" id="clear">清除全部人工改价</button>
 
   <div class="note" id="status"></div>
-  <div class="ver">插件 v0.4.6 · 中枢优先（点估计）+ 50% 分位区间，剔除无效修正项</div>
+
+  <!-- v0.6.0：数据更新。为什么要这个入口 —— 插件不在商店，代码更新必须重装；
+       但因子库与模型参数（90% 的更新）走远程，这里能主动催一次，不必等 6 小时。 -->
+  <div class="sec">
+    <div class="row" style="margin:0">
+      <label>因子库 / 模型参数</label>
+      <span id="datav" class="ov-badge">…</span>
+    </div>
+    <button class="btn soft" id="upd">检查数据更新</button>
+    <div class="hint" id="updmsg">新股与重标定会自动同步，无需重装扩展</div>
+  </div>
+
+  <div class="sec">
+    <button class="btn soft" id="fb">遇到问题 / 提个建议</button>
+    <div class="hint" id="fbmsg">复制诊断信息（版本、浏览器、出错页面），粘贴到微信发我就行</div>
+  </div>
+
+  <div class="ver" id="ver">插件版本读取中…</div>
 
   <script src="popup.js"></script>
 </body>

@@ -42,6 +42,48 @@
     if (w === "detail" && P.detail && !P.detail.isMounted()) P.detail.mount();
   }
 
+  /* ===== 远程参数库（v0.6.0）=====
+     为什么放在这里、为什么延迟 3 秒：
+       · 放在路由分流之后，是因为首屏渲染绝不能等网络 —— 网络慢时用户照样立刻看到预测；
+       · 延迟 3 秒，是等 list.start() 里的 loadStore 先把缓存应用完，避免并发覆盖；
+       · 只有「之前应用过某个版本、现在变成了另一个版本」才提示刷新。
+         首次安装（before 为 null）静默应用即可 —— 内置数据本来就是打包时的最新，
+         弹一次「已更新」纯属噪音。 */
+  function remoteBar(ver) {
+    try {
+      if (sessionStorage.getItem("i668p.remote.bar") === String(ver)) return;  // 同一版本只提示一次
+      sessionStorage.setItem("i668p.remote.bar", String(ver));
+    } catch (e) { /* 隐私模式无 sessionStorage，退化为每次都提示 */ }
+    const bar = document.createElement("div");
+    bar.className = "i668p-remote-bar";
+    const txt = document.createElement("span");
+    txt.className = "i668p-remote-txt";
+    txt.textContent = "因子库 / 模型参数已更新到 " + ver + "（新股与重标定，无需重装扩展）";
+    const go = document.createElement("button");
+    go.className = "i668p-remote-btn";
+    go.textContent = "刷新生效";
+    go.onclick = function () { location.reload(); };
+    const x = document.createElement("button");
+    x.className = "i668p-remote-x";
+    x.textContent = "\u00d7";
+    x.title = "暂不刷新";
+    x.onclick = function () { bar.remove(); };
+    bar.appendChild(txt);
+    bar.appendChild(go);
+    bar.appendChild(x);
+    document.body.appendChild(bar);
+  }
+
+  function checkRemote() {
+    const before = P.REMOTE_VER;
+    try {
+      P.checkRemoteUpdate(false, function (r) {
+        if (!r || !r.ok) return;                       // 网络/校验失败 → 静默，用内置数据照常工作
+        if (before && r.ver && r.ver !== before) remoteBar(r.ver);
+      });
+    } catch (e) { /* 任何异常都不影响主功能 */ }
+  }
+
   function init() {
     P.loadCfg(() => {
       apply();
@@ -53,6 +95,8 @@
         if (++fast > 20) clearInterval(fastTimer);
       }, 250);
       setInterval(apply, 800);
+      // 等首屏稳定后再去拉远程数据
+      setTimeout(checkRemote, 3000);
     });
   }
 

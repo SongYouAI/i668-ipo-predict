@@ -82,6 +82,7 @@ window.I668P = (function () {
   // chrome.storage 优先（扩展环境）；缺失时降级 localStorage（真页注入自测）
   const OV_KEY = "i668p.ov";        // 个股覆盖：{ code: { s1:{...}, s2:{...} } }
   const FT_KEY = "i668p.factors";   // 全局因子（二期启用）
+  const REMOTE_KEY = "i668p.remote"; // 远程参数库缓存：{ at: 时间戳, p: payload }
   const OV = {};                    // 内存镜像（列表页与详情页共用同一份）
   const FACTORS = {};
   let STORE_READY = false;
@@ -113,10 +114,12 @@ window.I668P = (function () {
     if (src && typeof src === "object") Object.keys(src).forEach((k) => { dst[k] = src[k]; });
   }
   function loadStore(cb) {
-    storeGet([OV_KEY, FT_KEY, AHC_KEY], (r) => {
+    storeGet([OV_KEY, FT_KEY, AHC_KEY, REMOTE_KEY], (r) => {
       copyInto(OV, r[OV_KEY]);
       copyInto(FACTORS, r[FT_KEY]);
       copyInto(AHC_HIST, r[AHC_KEY]);
+      // 远程参数库：先用缓存（离线可用），网络更新走 checkRemoteUpdate 的后台任务
+      applyRemoteCached(r[REMOTE_KEY]);
       STORE_READY = true;
       cb && cb();
     });
@@ -238,7 +241,8 @@ window.I668P = (function () {
         ① data/ahclose.js 固化值 —— 离线、零请求、与标定完全同口径（已过截止日的股）
         ② 实时价 —— 仅用于「截止日尚未到」的招股中新股，此时实时价才是当前最优可得
         ③ 运行时回补 —— 已过截止日但固化库没有（刚上市的新股）：抓一次历史日线并缓存 7 天 */
-  const AHC = (typeof window !== "undefined" && window.I668P_AHCLOSE) || null;
+  // v0.6.0：改为 let —— 远程参数库可整体替换这份固化表（新 A+H 上市无需发新版）
+  let AHC = (typeof window !== "undefined" && window.I668P_AHCLOSE) || null;
   const AHC_KEY = "ahcHist";
   const AHC_TTL = 7 * 864e5;
   let AHC_HIST = {};        // {aCode|endDate: {c, t}} 运行时回补缓存（镜像自 storage）
@@ -974,7 +978,8 @@ window.I668P = (function () {
      本地加載 —— 插件運行時**不請求 etnet**，因此不涉及跨域、不觸及任何收費接口。
      內容：① 保薦人歷史戰績（保薦數目 / 首日上升機率 / 平均首日升跌）
            ② 已上市股的「首日開市升跌」（= 首日開盤價，S3 的預測標的） */
-  const EX = (typeof window !== "undefined" && window.I668P_EXTRAS) || null;
+  // v0.6.0：改为 let —— 远程参数库可整体替换（补新股的保荐人/首日升跌无需发新版）
+  let EX = (typeof window !== "undefined" && window.I668P_EXTRAS) || null;
 
   function exOf(code) { return (EX && EX.stocks && EX.stocks[code]) || null; }
 
@@ -1052,9 +1057,13 @@ window.I668P = (function () {
      含义：基石多、占比高 = 机构认可度强，通常对暗盘/首日有正向支撑。
      ⚠️ 权重取小值：占比与首日涨幅并非线性关系，且该权重尚未经完整样本校准，
         故如实标注为"保守权重"，让使用者知道它的分量有限。 */
-  const CS_BASE = 35;    // 市场基准基石占比（%）
-  const CS_K = 0.12;     // 权重
-  const CS_CAP = 6;      // 修正量上下限（百分点）
+  // v0.6.0：这三项从独立常量收进对象 —— 独立 const 基本类型无法在运行时被远程参数覆盖，
+  // 而它们确实需要随时重标（基石权重尚未经完整样本校准，见下方注释）。
+  const CS = {
+    base: 35,   // 市场基准基石占比（%）
+    k: 0.12,    // 权重
+    cap: 6,     // 修正量上下限（百分点）
+  };
 
   function cornerstoneOf(code, stock) {
     const e = exOf(code);
@@ -1080,9 +1089,9 @@ window.I668P = (function () {
   function cornerstoneAdj(code, stock) {
     const c = cornerstoneOf(code, stock);
     if (!c || c.ratio == null) return null;
-    const raw = (c.ratio - CS_BASE) * CS_K;
-    const v = clamp(raw, -CS_CAP, CS_CAP);
-    return { v: +v.toFixed(2), raw: +raw.toFixed(2), c: c, base: CS_BASE, k: CS_K, cap: CS_CAP, capped: Math.abs(raw - v) > 0.01 };
+    const raw = (c.ratio - CS.base) * CS.k;
+    const v = clamp(raw, -CS.cap, CS.cap);
+    return { v: +v.toFixed(2), raw: +raw.toFixed(2), c: c, base: CS.base, k: CS.k, cap: CS.cap, capped: Math.abs(raw - v) > 0.01 };
   }
   function cornerstoneStep(cs) {
     const c = cs.c;
@@ -1469,6 +1478,158 @@ window.I668P = (function () {
     return d;
   }
 
+  /* ===================== 远程参数库（v0.6.0） =====================
+
+     为什么需要：要把插件分享给别人用，而 **Chrome 商店外的扩展不会自动更新**
+     （开发者模式加载的扩展，每次更新都要别人重新下载、解压、覆盖、点刷新——
+     10 个小白用户里能坚持更新两次的不会超过 2 个）。
+     但实测这个插件 90% 的更新是「数据 + 参数」，不是算法：
+       · 数据：data/extras.js（因子库）、data/ahclose.js（A+H 基准价）
+       · 参数：OVER_BUCKETS 七档、DARK_TO_OPEN 七档、AH_LIN、FLAT、基石权重、汇率
+     这些外置成 dist/latest.json，运行时拉取并缓存 —— 改数据/参数**不用重发版本**，
+     别人下次打开页面自动用上。只有改 core.js 算法才需要重装。
+
+     三级回落（国内访问 GitHub 不稳，必须留后路）：
+       ① 本地缓存 chrome.storage（6 小时内不重复请求，离线可用）
+       ② jsDelivr CDN → GitHub raw（依次尝试）
+       ③ 打包内置 data/*.js（网络全挂也能用完整功能）
+
+     ⚠️ 两个必须记住的坑：
+       ① **Infinity 序列化**：JSON.stringify(Infinity) 得到 "null"。OVER_BUCKETS 与
+          DARK_TO_OPEN 最后一档的 max 都是 Infinity，存进 JSON 会变 null，读回来若不
+          转回，`o < null` 恒为 false → 最后一档永远匹配不上，overBucketTxt 还会显示
+          "null"。故 apply 时把 null/缺失的 max 一律还原成 Infinity。
+       ② **不能拖慢页面**：数据拉取是后台异步的，渲染永远先用内置/缓存。
+          拿到新数据后就地改参数（下次计算即生效），并提示「刷新页面生效」。 */
+
+  const REMOTE_TTL = 6 * 3600 * 1000;
+  // jsDelivr 优先：国内可访问性明显好于 raw.githubusercontent.com
+  const REMOTE_URLS = [
+    "https://cdn.jsdelivr.net/gh/SongYouAI/i668-ipo-predict@main/dist/latest.json",
+    "https://raw.githubusercontent.com/SongYouAI/i668-ipo-predict/main/dist/latest.json",
+  ];
+  let REMOTE_VER = null;      // 已应用的远程数据版本号（界面用来显示数据是否最新）
+
+  function isNum(x) { return typeof x === "number" && isFinite(x); }
+
+  // 单档校验：中位数与上下侧必须是有限数；max 升序由 validRemote 统一检查
+  function validBucket(b) {
+    return !!b && typeof b === "object" && isNum(b.med) && isNum(b.dLo) && isNum(b.dHi) && b.dLo >= 0 && b.dHi >= 0;
+  }
+  function validBuckets(arr, min) {
+    if (!Array.isArray(arr) || arr.length < (min || 3)) return false;
+    if (!arr.every(validBucket)) return false;
+    // 最后一档必须无上界（JSON 里是 null），否则 overBucket 的兜底会失效
+    const last = arr[arr.length - 1];
+    if (last.max !== null && last.max !== undefined && last.max !== Infinity) return false;
+    // max 必须严格升序：overBucket 靠「第一个 o < max」取值，乱序会整体错档
+    for (let i = 1; i < arr.length - 1; i++) {
+      if (!(arr[i].max > arr[i - 1].max)) return false;
+    }
+    return true;
+  }
+  // 整体校验：宁可整份丢弃，也不接受半份坏数据 —— 参数错一位，所有人预测全错
+  function validRemote(p) {
+    if (!p || typeof p !== "object") return false;
+    const pa = p.params;
+    if (!pa || typeof pa !== "object") return false;
+    if (!validBuckets(pa.overBuckets)) return false;
+    if (!validBuckets(pa.darkToOpen)) return false;
+    if (!pa.ahLin || !isNum(pa.ahLin.a) || !isNum(pa.ahLin.b) || !isNum(pa.ahLin.dLo) || !isNum(pa.ahLin.dHi)) return false;
+    if (!pa.flat || !isNum(pa.flat.med) || !isNum(pa.flat.dLo) || !isNum(pa.flat.dHi)) return false;
+    if (pa.cs && (!isNum(pa.cs.base) || !isNum(pa.cs.k) || !isNum(pa.cs.cap))) return false;
+    if (pa.fx != null && (!isNum(pa.fx) || pa.fx <= 0)) return false;
+    const d = p.data;
+    if (!d || !d.extras || !d.extras.stocks || typeof d.extras.stocks !== "object") return false;
+    // 数据完整性护栏：远程库比内置库少一半以上，说明抓错了或抓残了 → 拒绝
+    const n = Object.keys(d.extras.stocks).length;
+    const baseN = EX && EX.stocks ? Object.keys(EX.stocks).length : 0;
+    if (n < 20 || (baseN && n < baseN * 0.5)) return false;
+    if (d.ahclose && d.ahclose.close && typeof d.ahclose.close !== "object") return false;
+    return true;
+  }
+  // 就地覆盖：OVER_BUCKETS 等是 const 数组/对象，改内容而非换引用，所有闭包立即看到新值
+  function applyRemote(p) {
+    if (!validRemote(p)) return false;
+    try {
+      const pa = p.params;
+      const norm = (arr) => arr.map((b) => {
+        const o = {
+          max: (b.max === null || b.max === undefined) ? Infinity : b.max,
+          med: b.med, dLo: b.dLo, dHi: b.dHi,
+          conf: isNum(b.conf) ? b.conf : 1,
+        };
+        if (isNum(b.pb)) o.pb = b.pb;
+        if (isNum(b.nh)) o.nh = b.nh;
+        if (isNum(b.nr)) o.nr = b.nr;
+        if (isNum(b.n)) o.n = b.n;
+        return o;
+      });
+      const ob = norm(pa.overBuckets);
+      OVER_BUCKETS.length = 0;
+      ob.forEach((x) => OVER_BUCKETS.push(x));
+      const dk = norm(pa.darkToOpen);
+      DARK_TO_OPEN.length = 0;
+      dk.forEach((x) => DARK_TO_OPEN.push(x));
+      Object.assign(AH_LIN, pa.ahLin);
+      Object.assign(FLAT, {
+        med: pa.flat.med, dLo: pa.flat.dLo, dHi: pa.flat.dHi,
+        conf: isNum(pa.flat.conf) ? pa.flat.conf : 1,
+        pb: isNum(pa.flat.pb) ? pa.flat.pb : FLAT.pb,
+      });
+      if (pa.cs) { CS.base = pa.cs.base; CS.k = pa.cs.k; CS.cap = pa.cs.cap; }
+      if (isNum(pa.fx)) CFG.fxCNY2HKD = pa.fx;
+      EX = p.data.extras;
+      if (p.data.ahclose && p.data.ahclose.close) AHC = p.data.ahclose;
+      REMOTE_VER = typeof p.v === "string" ? p.v : null;
+      return true;
+    } catch (e) { return false; }
+  }
+  function applyRemoteCached(rec) {
+    if (!rec || !rec.p) return false;
+    return applyRemote(rec.p);
+  }
+  function remoteInfo() {
+    return { ver: REMOTE_VER, urls: REMOTE_URLS.slice(), ttl: REMOTE_TTL };
+  }
+  // 后台检查更新：force=true 时无视 6 小时 TTL（供界面「立即检查」用）
+  function checkRemoteUpdate(force, cb) {
+    const done = typeof cb === "function" ? cb : function () {};
+    storeGet([REMOTE_KEY], (r) => {
+      const rec = r[REMOTE_KEY];
+      const now = Date.now();
+      if (!force && rec && now - (rec.at || 0) < REMOTE_TTL) {
+        done({ skipped: true, ver: REMOTE_VER });
+        return;
+      }
+      let i = 0;
+      const tryNext = () => {
+        if (i >= REMOTE_URLS.length) { done({ ok: false, err: "所有源均不可用", ver: REMOTE_VER }); return; }
+        const url = REMOTE_URLS[i++];
+        let req;
+        try { req = fetch(url, { cache: "no-store" }); }
+        catch (e) { tryNext(); return; }
+        Promise.resolve(req)
+          .then((res) => {
+            if (!res || !res.ok) throw new Error("HTTP " + (res && res.status));
+            return res.json();
+          })
+          .then((payload) => {
+            if (!validRemote(payload)) throw new Error("结构校验失败");
+            const pack = { at: now, p: payload };
+            const o = {};
+            o[REMOTE_KEY] = pack;
+            storeSet(o, () => {
+              const applied = applyRemote(payload);
+              done({ ok: applied, ver: REMOTE_VER, fetchedAt: now });
+            });
+          })
+          .catch(() => tryNext());
+      };
+      tryNext();
+    });
+  }
+
   /* ===================== 对外接口 ===================== */
   return {
     // 常量
@@ -1489,7 +1650,13 @@ window.I668P = (function () {
     // API / 行情
     apiGet: apiGet, gtimg: gtimg, toGtimgCode: toGtimgCode,
     gtimgCloseAt: gtimgCloseAt, ahLibRec: ahLibRec, ahBasis: ahBasis,
-    AH_CLOSE: AHC,
+    // AHC 会被远程数据整体替换，这里必须用 getter，否则导出的是旧引用
+    get AH_CLOSE() { return AHC; },
+    // 远程参数库
+    remoteInfo: remoteInfo, checkRemoteUpdate: checkRemoteUpdate, applyRemote: applyRemote,
+    validRemote: validRemote, isNum: isNum,
+    get REMOTE_VER() { return REMOTE_VER; },
+    get EX() { return EX; },
     loadData: loadData, loadDataCached: loadDataCached,
     // 阶段
     pdate: pdate, todayDate: todayDate, nowHour: nowHour, getStage: getStage, stageNote: stageNote,
@@ -1509,6 +1676,8 @@ window.I668P = (function () {
     ahPrem: ahPrem, ahLine: ahLine, AH_LIN: AH_LIN, ahBasis: ahBasis,
     OVER_BUCKETS: OVER_BUCKETS,
     FLAT: FLAT,
+    DARK_TO_OPEN: DARK_TO_OPEN,
+    CS: CS,
     allotmentRate: allotmentRate,
     factorCatalog: factorCatalog,
   };
