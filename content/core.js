@@ -1602,6 +1602,42 @@ window.I668P = (function () {
   function remoteInfo() {
     return { ver: REMOTE_VER, urls: REMOTE_URLS.slice(), ttl: REMOTE_TTL };
   }
+  /* 取远程参数库：
+     · 有 background → 交给它。它先问 GitHub API 要最新 commit sha，再用 @<sha>
+       拼 jsDelivr 地址，绕开分支引用 12 小时缓存（理由见 background.js 顶部注释）。
+       且 background 的 fetch 不受页面 CORS 限制，将来加 Gitee 源也能用。
+     · 无 background（vm 自测 / 真页注入）→ 退回按 REMOTE_URLS 直接取，
+       保证测试脚本照常跑。 */
+  function fetchRemoteText() {
+    return new Promise((resolve, reject) => {
+      const direct = () => {
+        let i = 0;
+        const next = () => {
+          if (i >= REMOTE_URLS.length) { reject(new Error("all sources failed")); return; }
+          const u = REMOTE_URLS[i++];
+          let p;
+          try { p = fetch(u, { cache: "no-store" }); } catch (e) { next(); return; }
+          Promise.resolve(p)
+            .then((r) => (r && r.ok ? r.text() : Promise.reject(new Error("HTTP " + (r && r.status)))))
+            .then(resolve)
+            .catch(next);
+        };
+        next();
+      };
+      try {
+        if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) {
+          direct();
+          return;
+        }
+        chrome.runtime.sendMessage({ type: "i668p.remote" }, (resp) => {
+          if (chrome.runtime.lastError) { direct(); return; }
+          if (resp && resp.ok && resp.text) resolve(resp.text);
+          else reject(new Error("background 全部源失败"));
+        });
+      } catch (e) { direct(); }
+    });
+  }
+
   // 后台检查更新：force=true 时无视 6 小时 TTL（供界面「立即检查」用）
   function checkRemoteUpdate(force, cb) {
     const done = typeof cb === "function" ? cb : function () {};
@@ -1612,31 +1648,19 @@ window.I668P = (function () {
         done({ skipped: true, ver: REMOTE_VER });
         return;
       }
-      let i = 0;
-      const tryNext = () => {
-        if (i >= REMOTE_URLS.length) { done({ ok: false, err: "所有源均不可用", ver: REMOTE_VER }); return; }
-        const url = REMOTE_URLS[i++];
-        let req;
-        try { req = fetch(url, { cache: "no-store" }); }
-        catch (e) { tryNext(); return; }
-        Promise.resolve(req)
-          .then((res) => {
-            if (!res || !res.ok) throw new Error("HTTP " + (res && res.status));
-            return res.json();
-          })
-          .then((payload) => {
-            if (!validRemote(payload)) throw new Error("结构校验失败");
-            const pack = { at: now, p: payload };
-            const o = {};
-            o[REMOTE_KEY] = pack;
-            storeSet(o, () => {
-              const applied = applyRemote(payload);
-              done({ ok: applied, ver: REMOTE_VER, fetchedAt: now });
-            });
-          })
-          .catch(() => tryNext());
-      };
-      tryNext();
+      fetchRemoteText()
+        .then((text) => {
+          const payload = JSON.parse(text);
+          if (!validRemote(payload)) throw new Error("结构校验失败");
+          const pack = { at: now, p: payload };
+          const o = {};
+          o[REMOTE_KEY] = pack;
+          storeSet(o, () => {
+            const applied = applyRemote(payload);
+            done({ ok: applied, ver: REMOTE_VER, fetchedAt: now });
+          });
+        })
+        .catch((e) => { done({ ok: false, err: String((e && e.message) || e), ver: REMOTE_VER }); });
     });
   }
 
