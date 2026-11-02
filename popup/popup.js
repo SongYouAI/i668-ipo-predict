@@ -85,7 +85,11 @@ document.addEventListener("DOMContentLoaded", () => {
       content/core.js 的 validRemote()。popup 写进去的坏数据不会污染模型：
       页面加载时 applyRemote 会整份拒绝，继续用内置数据。 */
 const REMOTE_KEY = "i668p.remote";
+// 与 content/core.js 的 REMOTE_URLS 保持一致（国内实测顺序）
 const REMOTE_URLS = [
+  "https://testingcf.jsdelivr.net/gh/SongYouAI/i668-ipo-predict@main/dist/latest.json",
+  "https://gcore.jsdelivr.net/gh/SongYouAI/i668-ipo-predict@main/dist/latest.json",
+  "https://fastly.jsdelivr.net/gh/SongYouAI/i668-ipo-predict@main/dist/latest.json",
   "https://cdn.jsdelivr.net/gh/SongYouAI/i668-ipo-predict@main/dist/latest.json",
   "https://raw.githubusercontent.com/SongYouAI/i668-ipo-predict/main/dist/latest.json",
 ];

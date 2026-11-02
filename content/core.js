@@ -1503,8 +1503,18 @@ window.I668P = (function () {
           拿到新数据后就地改参数（下次计算即生效），并提示「刷新页面生效」。 */
 
   const REMOTE_TTL = 6 * 3600 * 1000;
-  // jsDelivr 优先：国内可访问性明显好于 raw.githubusercontent.com
+  /* 源顺序按「国内实测可用性」排，不是随便列的（2026-11-02 在这台机器上逐个 curl 过）：
+       testingcf 3.0s ✓ · gcore 3.9s ✓ · cdn.jsdelivr.net ✗（TLS 被 RST）· raw ✗（SSL 拦截）
+     jsDelivr 的这几个域名都是官方提供的，不是第三方加速站 —— 后者（ghproxy 之类）
+     时好时坏，放进生产链路等于给用户埋雷。
+     ⚠️ jsDelivr 对**分支**引用缓存 s-maxage=43200（12 小时，实测响应头确认）。
+        意味着你更新 dist/latest.json 后，用户最多要等 12 小时才收到；
+        点 popup 里的「检查数据更新」也绕不过 CDN 缓存。
+        要准实时必须再加一个不走 CDN 的源（Gitee raw 或自建），见 README。 */
   const REMOTE_URLS = [
+    "https://testingcf.jsdelivr.net/gh/SongYouAI/i668-ipo-predict@main/dist/latest.json",
+    "https://gcore.jsdelivr.net/gh/SongYouAI/i668-ipo-predict@main/dist/latest.json",
+    "https://fastly.jsdelivr.net/gh/SongYouAI/i668-ipo-predict@main/dist/latest.json",
     "https://cdn.jsdelivr.net/gh/SongYouAI/i668-ipo-predict@main/dist/latest.json",
     "https://raw.githubusercontent.com/SongYouAI/i668-ipo-predict/main/dist/latest.json",
   ];

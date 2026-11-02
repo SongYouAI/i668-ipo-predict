@@ -27,7 +27,7 @@
     "https://web.ifzq.gtimg.cn/*",
     "https://www1.hkexnews.hk/*",
     "https://www.hkexnews.hk/*",
-    "https://cdn.jsdelivr.net/*",
+    "https://*.jsdelivr.net/*",
     "https://raw.githubusercontent.com/*"
   ],
   "web_accessible_resources": [
