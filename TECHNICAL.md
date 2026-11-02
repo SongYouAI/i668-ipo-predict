@@ -7,7 +7,7 @@
 > 全量验算（129 只股票 / 368 个阶段样本 / 0 错误）复核。凡是不能验证的东西，本文都会标注
 > 「未验证」或「这是推断」——**宁可说不知道，也不编。**
 >
-> 适用版本：**v0.5.5**（2026-10-31）
+> 适用版本：**v0.6.1**（2026-11-02）
 
 ---
 
@@ -179,6 +179,62 @@ Chrome 能加载是因为它早就被授权过；**Edge 从未授权 → 读不�
 > ⚠️ **本项目被「定义了没导出」坑过 3 次**。任何在 `core.js` 里新加的函数，
 > **必须**同时加到那个长长的 `return { ... }` 里，调用方一律写 `P.xxx()`。
 > 改完务必跑：`node tools/audit-contract.mjs .`
+
+### 3.4 远程参数库架构（v0.6.0 起）
+
+**要解决的问题**：插件不在应用商店，Chrome 对商店外扩展**没有静默更新通道**。
+开发者模式加载的扩展，每次更新都要使用者重新下载、解压、覆盖、点刷新 ——
+10 个非技术用户里，能坚持更新两次的不超过 2 个。
+
+但本插件 90% 的更新是「数据 + 参数」，不是算法。所以把它们全部外置：
+
+| 层次 | 内容 | 更新方式 |
+|---|---|---|
+| **远程可更** | 因子库（129 只）、A+H 基准价（40 只）、`OVER_BUCKETS` 七档、`DARK_TO_OPEN` 七档、`AH_LIN`、`FLAT`、基石权重、汇率 | 改完跑 `node tools/build-remote.mjs` → `git push`，**使用者无需任何操作** |
+| **必须重装** | `content/*.js` 算法、`list.js` / `detail.js` 视图 | 重新分发 |
+
+**数据流**
+
+```
+data/*.js + core.js 参数
+        │  tools/build-remote.mjs（单一数据源，7 项自检）
+        ▼
+   dist/latest.json（68KB）
+        │  git push
+        ▼
+GitHub → GitHub API（取最新 commit sha）→ jsDelivr CDN
+        │  background.js 依次尝试，拿到第一个成功的
+        ▼
+content/core.js: validRemote() 严格校验 → applyRemote() 就地覆盖
+        │
+        ▼
+chrome.storage.local["i668p.remote"]（缓存 6 小时，离线可用）
+```
+
+**关键设计**
+
+1. **三级回落**：本地缓存 → CDN → 打包内置 `data/*.js`。网络全挂时功能完整。
+2. **绝不阻塞渲染**：`boot.js` 在首屏稳定后 3 秒才去检查，拿到新数据后提示「刷新生效」。
+3. **严格校验，整份拒绝**：`validRemote()` 检查档位数量、`max` 严格升序、末档必须无上界、
+   数值必须是有限数、`dLo/dHi` 不得为负（否则区间反转）、远程因子库不得比内置少一半。
+   任一不满足 → 整份丢弃，继续用旧数据。**不接受「半份好数据」**。
+4. **`const` 数组就地改**：`OVER_BUCKETS` / `DARK_TO_OPEN` 用 `length = 0` + `push` 覆盖内容，
+   不改引用 → 所有闭包立即看到新值，无需重构调用方。
+5. **`EX` / `AHC` 改 `let`**：这两份数据要整体替换，故导出 `AH_CLOSE` 时用 getter，
+   否则外部拿到的是旧引用。
+
+**踩过的三个坑**
+
+| 坑 | 现象 | 处理 |
+|---|---|---|
+| **`JSON.stringify(Infinity)` → `"null"`** | 末档 `max` 变 `null`，`o < null` 恒为 false，末档永不命中，界面显示 `"null"` | 生成时写 `null`，`applyRemote` 时还原成 `Infinity`；`build-remote.mjs` 与 `verify-remote.js` 均有断言 |
+| **jsDelivr 分支引用缓存 12 小时** | 推送新数据后，`@main` 仍返回旧版；调官方 purge API 返回 `finished`，但 3 分钟后 4 个节点**仍返回旧版** | 改问 GitHub API 要最新 commit sha，用 `@<sha>` 拼地址 —— commit 引用 immutable，每个新提交都是新 URL。实测推送后 **3.7 秒**即可拿到新版 |
+| **Gitee raw 无 `Access-Control-Allow-Origin`** | 页面里 fetch 被拦（虽然只有 60 秒缓存，比 jsDelivr 好得多） | 请求统一走 `background.js`（扩展权限 fetch 不受 CORS 限制），为将来加 Gitee 源留好接口 |
+
+**国内可用性实测**（2026-11-02，本机直连，不走代理）：
+`testingcf.jsdelivr.net` 3.0s ✓ · `gcore.jsdelivr.net` 3.9s ✓ ·
+`cdn.jsdelivr.net` ✗（TLS RST）· `raw.githubusercontent.com` ✗（SSL 拦截）· `api.github.com` 2.1s ✓ ·
+`gitee.com` 0.7s ✓
 
 ---
 

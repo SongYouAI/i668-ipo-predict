@@ -12,6 +12,18 @@
 
 > 改过代码须在扩展管理页点「重新加载」；**改过 `manifest.json` 必须重新加载**（浏览器只在启动时读一次清单）。
 
+**给非技术用户安装**：见 [install/安装说明.md](install/安装说明.md)。
+目录里还带两个一键脚本（`install/` 下），会自己找安装包、解压到固定目录、把路径放进剪贴板，
+然后告诉使用者剩下的 4 步怎么点 —— Chrome 规定那 4 步必须人手动。
+
+### 数据会自动更新，不用重装
+
+因子库（129 只）与模型参数（超购七档 / S3 偏移 / A+H 线性 / 基石权重 / 汇率）**不在代码里**，
+而是运行时从 `dist/latest.json`（68KB）拉取，缓存到本机。改数据、重标定参数后，
+使用者**不用重新安装**，下次打开页面自动用上（每 6 小时检查一次，也可在插件图标里点「检查数据更新」）。
+
+只有改 `content/*.js` 算法时才需要重新分发。详见 [TECHNICAL.md](TECHNICAL.md) 的数据架构章节。
+
 ## 怎么用
 
 ### 列表页 `/stocks`
@@ -131,12 +143,15 @@
 ```
 i668-ipo-predict/
 ├── manifest.json             # MV3 清单
-├── data/extras.js            # 免费因子库（fetch-etnet.py 生成，勿手改）
-├── data/ahclose.js           # A+H 溢价基准价（fetch-ah-close.py 生成，勿手改）
+├── background.js             # service worker：远程数据/PDF 下载（脱离页面 CORS）
+├── data/extras.js            # 内置因子库（打包时快照；运行时会被远程版覆盖）
+├── data/ahclose.js           # 内置 A+H 基准价（同上）
+├── dist/latest.json          # 远程参数库（build-remote.mjs 生成，扩展本身不读它）
 ├── content/                  # core.js / list.js / detail.js / boot.js / styles.css
-├── popup/                    # 设置页
-├── tools/                    # backtest.js / verify-calc.js / fetch-etnet.py / fetch-ah-close.py
-│                             # fetch-prospectus.py / make-icons.py
+├── popup/                    # 设置页（数据版本 / 检查更新 / 反馈）
+├── install/                  # 非技术用户：Mac/Windows 一键脚本 + 安装说明
+├── tools/                    # backtest.js / verify-calc.js / build-remote.mjs
+│                             # fetch-etnet.py / fetch-ah-close.py / fetch-prospectus.py / make-icons.py
 ├── screenshots/              # README 用界面截图
 └── README.md
 ```
@@ -145,6 +160,8 @@ i668-ipo-predict/
 
 | 版本 | 要点 |
 |---|---|
+| **0.6.1** | 数据与算法分离的收尾：加 `background.js`，用 **GitHub 最新 commit sha 拼 jsDelivr 地址**，绕开分支引用 12 小时缓存 —— 实测推送后 3.7 秒即可拿到新版（直接请求 `@main` 仍返回旧版）。remote 请求统一走 background，顺带摆脱页面 CORS 约束 |
+| **0.6.0** | **数据与算法分离**：因子库与模型参数外置为 `dist/latest.json`（68KB），运行时拉取并缓存，改数据不用重装扩展。`core.js` 新增 `validRemote()` 严格校验 + `applyRemote()` 就地覆盖；`EX`/`AHC` 改 `let` 支持整体替换；`CS_BASE/K/CAP` 收进对象 `CS`。踩坑：`JSON.stringify(Infinity) === "null"`，末档必须在应用时还原。popup 新增数据版本展示、检查更新、一键复制诊断信息反馈；新增 `tools/build-remote.mjs`（7 项自检）与 `install/`（Mac/Windows 一键脚本 + 小白说明） |
 | **0.5.5** | 绿鞋兜底改**按需 Range 下载**：不再把整份 20MB+ 章程拉完再解析，只取前 80 页所需的块。同一份 23.7MB / 476 页章程三轮交替实测：全量 14.1s / 22.6MB → Range 6.1s / 6.6MB（**2.3×、省 71% 流量**，绿鞋结论一致）。DNR 规则补 `access-control-expose-headers`（pdf.js 靠 Content-Range 推总大小）；Range 失败自动退回全量。修正详情页「解析中」文案里未实测的耗时承诺 |
 | **0.5.4** | 超购档参数表加 `nh/nr`（历史/近期样本数），工坊逐档标注样本时效（λ 注释原误写 0，实为 0.11）；`tools/backtest.js` 改为加载 `ahclose.js`，首次量化**空窗期 A+H 降级路径**（n=39 / 命中 53.8% / 误差 7.1pt）；修掉详情页文案里漏出的 Markdown 星号；README 补「已知局限」并把过时的 48.2% 更正为实测 45.2% |
 | **0.5.3** | **A+H 溢价改回「招股截止日 A 股收盘价」口径**（新增 `data/ahclose.js` 离线固化 + `tools/fetch-ah-close.py`）。旧实现用实时价，40 只 A+H 里 39 只漂移、中位 −40pt、最大 −120pt（02249 晶合集成 +102.8% → −17.8%），模型输入跑出标定分布；计算过程里现在会写明「A 股价取 X 日收盘 Y 元」 |

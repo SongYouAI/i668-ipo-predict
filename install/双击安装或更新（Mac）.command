@@ -25,45 +25,62 @@ say "=============================================================="
 say "   港股打新预测插件 · 安装 / 更新助手"
 say "=============================================================="
 
-# ---------- 1. 找安装包：优先本地（微信收到的最快），没有再联网下 ----------
+# ---------- 1. 先判断：是不是已经解压在扩展目录里了 ----------
+# 场景：作者把整个 zip 发给使用者，解压后双击本脚本 —— 这时文件已经在位，
+# 再去下载 110MB 纯属浪费，直接跳到"把路径放进剪贴板"。
 HERE="$(cd "$(dirname "$0")" && pwd)"
-for f in "$HERE"/i668*.zip "$HERE"/../i668*.zip "$HOME/Downloads"/i668*.zip "$HOME/Desktop"/i668*.zip; do
-  if [ -f "$f" ]; then ZIP="$f"; break; fi
-done
+PARENT="$(dirname "$HERE")"
+ZIP=""
 
-if [ -z "$ZIP" ]; then
-  say "本地没找到 i668*.zip，正在从 GitHub 下载（约 110MB，网速慢可能要几分钟）…"
-  curl -L --progress-bar --max-time 900 -o /tmp/i668-install.zip \
-    "https://codeload.github.com/SongYouAI/i668-ipo-predict/zip/refs/heads/main"
-  if [ ! -s /tmp/i668-install.zip ] || [ "$(wc -c < /tmp/i668-install.zip)" -lt 100000 ]; then
-    say "❌ 下载失败或文件不完整。"
-    say "   办法：让作者把 i668 安装包（zip）直接发给你，放到「下载」文件夹，"
-    say "         再双击一次本脚本即可。"
+if [ -f "$PARENT/manifest.json" ]; then
+  FINAL="$PARENT"
+  say "① 检测到已在扩展目录内（无需解压）：$FINAL"
+  SKIP_EXTRACT=1
+else
+  SKIP_EXTRACT=0
+fi
+
+if [ "$SKIP_EXTRACT" = "0" ]; then
+  # 找安装包：优先本地（微信收到的最快），没有再联网下
+  for f in "$HERE"/i668*.zip "$PARENT"/i668*.zip "$HOME/Downloads"/i668*.zip "$HOME/Desktop"/i668*.zip; do
+    if [ -f "$f" ]; then ZIP="$f"; break; fi
+  done
+
+  if [ -z "$ZIP" ]; then
+    say "本地没找到 i668*.zip，正在从 GitHub 下载（约 110MB，网速慢可能要几分钟）…"
+    curl -L --progress-bar --max-time 900 -o /tmp/i668-install.zip \
+      "https://codeload.github.com/SongYouAI/i668-ipo-predict/zip/refs/heads/main"
+    if [ ! -s /tmp/i668-install.zip ] || [ "$(wc -c < /tmp/i668-install.zip)" -lt 100000 ]; then
+      say "❌ 下载失败或文件不完整。"
+      say "   办法：让作者把 i668 安装包（zip）直接发给你，放到「下载」文件夹，"
+      say "         再双击一次本脚本即可。"
+      pause; exit 1
+    fi
+    ZIP=/tmp/i668-install.zip
+  fi
+  say "① 安装包：$ZIP"
+
+  # ---------- 2. 解压到固定目录（覆盖旧版） ----------
+  rm -rf "$DEST"
+  mkdir -p "$DEST"
+  unzip -q "$ZIP" -d "$DEST" 2>/dev/null
+  SRC="$(find "$DEST" -maxdepth 3 -name manifest.json -print -quit 2>/dev/null | xargs -I{} dirname {} 2>/dev/null)"
+  if [ -z "$SRC" ] || [ ! -f "$SRC/manifest.json" ]; then
+    say "❌ 安装包里没找到 manifest.json —— 文件可能不完整，请重新下载或找作者要。"
     pause; exit 1
   fi
-  ZIP=/tmp/i668-install.zip
-fi
-say "① 安装包：$ZIP"
 
-# ---------- 2. 解压到固定目录（覆盖旧版） ----------
-rm -rf "$DEST"
-mkdir -p "$DEST"
-unzip -q "$ZIP" -d "$DEST" 2>/dev/null
-SRC="$(find "$DEST" -maxdepth 3 -name manifest.json -print -quit 2>/dev/null | xargs -I{} dirname {} 2>/dev/null)"
-if [ -z "$SRC" ] || [ ! -f "$SRC/manifest.json" ]; then
-  say "❌ 安装包里没找到 manifest.json —— 文件可能不完整，请重新下载或找作者要。"
-  pause; exit 1
+  # 顶层目录统一改名，便于下次覆盖与让用户认路
+  if [ "$SRC" != "$FINAL" ]; then
+    rm -rf "$FINAL"
+    mv "$SRC" "$FINAL"
+  fi
+  say "② 已解压到：$FINAL"
+
+  # ---------- 3. 清掉不需要的目录 ----------
+  rm -rf "$FINAL/tools" "$FINAL/screenshots" "$FINAL/_metadata" "$FINAL/.git" 2>/dev/null
 fi
 
-# 顶层目录统一改名，便于下次覆盖与让用户认路
-if [ "$SRC" != "$FINAL" ]; then
-  rm -rf "$FINAL"
-  mv "$SRC" "$FINAL"
-fi
-say "② 已解压到：$FINAL"
-
-# ---------- 3. 清掉不需要的目录（体积能小 10MB+） ----------
-rm -rf "$FINAL/tools" "$FINAL/screenshots" "$FINAL/_metadata" "$FINAL/.git" 2>/dev/null
 VER="$(/usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$FINAL/manifest.json" 2>/dev/null || echo "?")"
 say "③ 版本：v$VER  ·  体积：$(du -sh "$FINAL" 2>/dev/null | cut -f1)"
 

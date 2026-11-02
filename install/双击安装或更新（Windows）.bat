@@ -25,14 +25,17 @@ echo    港股打新预测插件 · 安装 / 更新助手
 echo ==============================================================
 echo.
 
-REM ---------- 1. 找安装包 ----------
+REM ---------- 1. 先判断：是不是已经解压在扩展目录里了 ----------
+for %%I in ("%~dp0..") do set "PARENT=%%~fI"
+if exist "%PARENT%\manifest.json" goto :INPLACE
+
+REM 找安装包
 for %%F in ("%~dp0i668*.zip" "%~dp0..\i668*.zip" "%USERPROFILE%\Downloads\i668*.zip" "%USERPROFILE%\Desktop\i668*.zip") do (
   if exist "%%~fF" if not defined ZIP set "ZIP=%%~fF"
 )
 
 if not defined ZIP (
   echo 本地没找到 i668*.zip，正在从 GitHub 下载（约 110MB，网速慢可能要几分钟）...
-  set "TMPZIP=%TEMP%\i668-install.zip"
   powershell -NoProfile -Command "try { Invoke-WebRequest -Uri 'https://codeload.github.com/SongYouAI/i668-ipo-predict/zip/refs/heads/main' -OutFile '%TEMP%\i668-install.zip' -UseBasicParsing } catch { exit 1 }"
   if not exist "%TEMP%\i668-install.zip" (
     echo.
@@ -47,7 +50,7 @@ if not defined ZIP (
 )
 echo [1/4] 安装包：!ZIP!
 
-REM ---------- 2. 解压 ----------
+REM 解压
 if exist "%DEST%" rmdir /s /q "%DEST%"
 mkdir "%DEST%" 2>nul
 powershell -NoProfile -Command "Expand-Archive -Path '!ZIP!' -DestinationPath '%DEST%' -Force" >nul 2>&1
@@ -68,10 +71,17 @@ if /i not "!SRC!"=="%FINAL%" (
 )
 echo [2/4] 已解压到：%FINAL%
 
-REM ---------- 3. 清掉不需要的目录 ----------
+REM 清掉不需要的目录
 for %%D in (tools screenshots _metadata .git) do (
   if exist "%FINAL%\%%D" rmdir /s /q "%FINAL%\%%D"
 )
+goto :VERINFO
+
+:INPLACE
+set "FINAL=%PARENT%"
+echo [1/4] 检测到已在扩展目录内，无需解压：%FINAL%
+
+:VERINFO
 for /f "tokens=2 delims=:, " %%V in ('findstr /i "\"version\"" "%FINAL%\manifest.json"') do set "VER=%%~V"
 echo [3/4] 版本：v!VER!
 
