@@ -3,7 +3,7 @@
  *
  * i668 是 Vue SPA：从列表点进详情、用「← 新股列表」返回，都是 pushState 路由切换，
  * content script **不会重新执行**。故必须自己监听路由并按视图装/拆：
- *   /stocks          → list 层（三列预测 + 浮条）
+ *   /stocks          → list 层（四列：实时孖展 + S1/S2/S3 预测 + 浮条）
  *   /stocks/<5位代码> → detail 层（预测工坊）
  * 两者互斥，切走时一律拆干净（含 html.i668p-wide 宽度锁与浮条），避免污染另一个视图。
  *

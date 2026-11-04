@@ -3,7 +3,7 @@
  *
  * 最先加载，向 window.I668P 暴露：常量 / 存储 / 站点 API / 腾讯行情 /
  * 阶段引擎 / **可解释预测模型** / 因子目录 / 通用小工具。
- * list.js（列表页三列）与 detail.js（详情页「预测工坊」）共用本层，
+ * list.js（列表页四列）与 detail.js（详情页「预测工坊」）共用本层，
  * 避免模型出现两份实现而悄悄漂移。
  *
  * v0.4.0 架构（2026-09-25）：
@@ -24,11 +24,18 @@ window.I668P = (function () {
   const SECRET = "6680fc61c8585cfca143366eea267b67617b7c2830c1c896cd952b276db117c9";
 
   const MIN_COL_W = 130;      // 预测列宽下限：实测内容最宽 126px（如「1009.495–1030.503」）
-  const MAX_COL_W = 200;      // 预测列宽上限：超宽屏时不把列拉得离谱
+  const MAX_COL_W = 230;      // 预测列宽上限：超宽屏时不把列拉得离谱
+  // v0.8.0：「实时孖展」列**固定窄宽**（老板原话：「这一列做得有点太宽了，可以再调整得窄一点」）。
+  //   该列内容只有「649倍」几个字，与三列预测列同宽（200px）纯属浪费；
+  //   64px 足以放下表头「实时孖展」（12px 字 ×4 = 48px）与数值，且不挤压数值列。
+  const MARGIN_COL_W = 64;
   const DARK_END = 18.5;      // 暗盘约 16:15–18:30，18:30 后视为「已结束」（HKT）
   const WIDE_CLASS = "i668p-wide";   // 放开站点 .app 960px 宽度锁的触发类（由 JS 添加）
 
   const COLS = [
+    // 「实时孖展」放在预测列**之前**（仍在行尾区域，不插到站点原列中间）：
+    // 决策顺序 = 先看热度倍数 → 再看招股期预测 → 中签后 → 暗盘后。
+    { key: "margin", title: "实时孖展", sub: "倍数" },
     { key: "s1", title: "招股期预测", sub: "S1" },
     { key: "s2", title: "中签后预测", sub: "S2" },
     { key: "s3", title: "暗盘后预测", sub: "S3" },
@@ -36,11 +43,12 @@ window.I668P = (function () {
   const STAGE_ORDER = { S1: 1, S2: 2, S3: 3, LISTED: 4 };
   const KEY_ORDER = { s1: 1, s2: 2, s3: 3 };
   const STAGE_NAME = { S1: "招股期 S1", S2: "中签后 S2", S3: "暗盘后 S3", LISTED: "已上市", UNKNOWN: "日期缺失" };
-  const KEY_LABEL = { s1: "招股期预测", s2: "中签后预测", s3: "暗盘后预测" };
+  const KEY_LABEL = { s1: "招股期预测", s2: "中签后预测", s3: "暗盘后预测", margin: "实时孖展倍数" };
   const KEY_BASIS = {
-    s1: "方向性区间（相对发行价）",
+    s1: "目标：暗盘收盘方向（相对发行价）｜招股期以实时孖展倍数为热度锚",
     s2: "目标：暗盘收盘价（相对发行价）",
     s3: "目标：上市首日开盘价（相对发行价）",
+    margin: "券商融资认购（孖展）口径的超购倍数，招股期内实时跳变",
   };
 
   const CFG = { fxCNY2HKD: 1.09, liveMarket: true, simulateDate: "" };
@@ -609,7 +617,64 @@ window.I668P = (function () {
     }, extra || {});
   }
 
+  /* ---------------------- 招股期热度锚：实时孖展倍数 → 预测中枢 ----------------------
+   *
+   * 背景（老板 v0.8.0 的原话）：「你更新了申购倍数，但是你根据申购倍数计算的招股期
+   * 预测涨跌幅的价格还没有更新。这个是不是也不太合适？」
+   * —— 说得对，而且是个**逻辑漏洞**：S1 此前**完全没有用**孖展数据
+   *    （只有 A+H 溢价线性，或赛道关键词选档），于是同一屏上会出现
+   *    「实时孖展 649 倍」与「招股期预测 −4.5%~+13.5%」这种自相矛盾的画面。
+   *
+   * 口径与换算（看清这条链，才不是编数）：
+   *   · 孖展倍数 ＝ **单一券商**融资认购(孖展)渠道的超购倍数，招股期内实时跳变；
+   *   · 最终公开发售超购倍数 ＝ **全市场**口径 ⇒ 恒 ≥ 孖展倍数
+   *     （孖展只是公开发售的一部分，且一家券商只占全市场的一小份）。
+   *     唯一可核查的对照样本：02384 东山精密 孖展 0.39 → 最终公开发售 0.52，
+   *     两者同落在「<15 倍」档，方向与量级都对得上；
+   *   · 当前市场（2026 Q4）最终超购中位数已跌到 4 倍左右，而招股期孖展实测读数
+   *     也在 0.22 ~ 4.0 倍 → **两者同一量级**，按「下界」读档时档位大体对齐；
+   *   · 落档后**直接复用 S2 已标定的 OVER_BUCKETS**（同一目标：暗盘收盘相对发行价），
+   *     不另起一套参数 —— 一套参数、两处使用，避免两份实现悄悄漂移。
+   *
+   * ⚠️ 诚实性边界（必须写进界面，不能藏）：
+   *   公开渠道**拿不到招股期孖展的历史值**（集思录会员专享 / AAStocks 对招股股
+   *   显示「暂时没有相关资料」/ etnet 不展示 / 智通与 AiPO 不可达），所以
+   *   「孖展 → 暗盘」这条映射**没有历史样本可标定**。本映射只保证
+   *   「档位单调、方向不反」，不保证数值精度：
+   *     · 置信度封顶 ★★☆（映射未标定）；
+   *     · 界面明写「未标定」，并说明孖展是**下界**；
+   *     · 若最终超购落到更高一档，实际结果可能好于本区间上沿 —— 故在计算过程里
+   *       给出「高一档参考」，让使用者自己判断要不要上调预期。
+   */
+  function marginTierLabel(v) {
+    if (v == null) return "—";
+    if (v >= 100) return "爆款";
+    if (v >= 10) return "热门";
+    if (v >= 1) return "一般";
+    return "冷门";
+  }
+  // 孖展倍数 → 预测锚。返回 null 表示该股没有孖展数据（调用方须走原 A+H / 赛道路径）。
+  function marginAnchor(s) {
+    const mg = marginOf(s && s.stock_code);
+    if (!mg) return null;
+    const m = num(mg.m);
+    if (m == null || m < 0 || !isFinite(m)) return null;
+    const b = overBucket(m);
+    const bs = bucketSample(b);
+    const i = OVER_BUCKETS.indexOf(b);
+    const nb = (i >= 0 && i + 1 < OVER_BUCKETS.length) ? OVER_BUCKETS[i + 1] : null;
+    return {
+      m: m, b: b, bs: bs, next: nb,
+      lo: +(b.med - b.dLo).toFixed(1),
+      hi: +(b.med + b.dHi).toFixed(1),
+      tier: marginTier(m),
+      label: marginTierLabel(m),
+    };
+  }
+
   // S1：招股期（超购未出）→ 方向性 + 宽区间，低置信；A+H 可借招股截止日 A 股收盘价估锚
+  // v0.8.0：招股期**不再是「完全没有需求信息」** —— 实时孖展倍数就是现成的热度信号，
+  //   有它就以它为主锚（见 marginAnchor 的口径说明），没有才退回 A+H / 赛道。
   function predictS1(s, ctx) {
     const ipo = num(s.ipo_price);
     if (ipo == null || ipo <= 0) return null;
@@ -617,9 +682,61 @@ window.I668P = (function () {
     const ah = ahPrem(s, ctx);
     const steps = [];
     let loP, hiP, conf = 1, anchor;
+    let pb = null;
 
     const is18c = /18C/.test(s.listing_chapter || "");
-    if (ah != null) {
+    const ma = marginAnchor(s);
+    if (ma) {
+      // —— 主锚：孖展热度档（读 S2 已标定的超购分档表）——
+      loP = ma.lo; hiP = ma.hi;
+      // 映射未标定 ⇒ 置信封顶 ★★☆（不因为"有孖展"就给高分）
+      conf = Math.min(ma.b.conf, 2);
+      pb = ma.b.pb;
+      anchor = {
+        k: "孖展热度档", txt: (ma.m >= 100 ? Math.round(ma.m) : Math.round(ma.m * 100) / 100) + "倍（" + ma.label + "）",
+        d: "落在 " + overBucketTxt(ma.m) + "（该档暗盘中位数 " + pctTxt(ma.b.med, 1) +
+          "、破发率 " + Math.round(ma.b.pb * 100) + "%）",
+      };
+      steps.push({
+        k: "孖展热度档", type: "base", v: ma.b.med, lo: loP, hi: hiP,
+        d: "实时孖展 " + ma.m + " 倍（" + ma.label + "）→ 落 " + overBucketTxt(ma.m) +
+          "，取该档已标定的暗盘中枢 " + pctTxt(ma.b.med, 1) +
+          "，区间 = 该档 [P25, P75] = " + pctTxt(ma.lo, 1) + " ~ " + pctTxt(ma.hi, 1) +
+          "。样本 n=" + ma.bs.n + "（近期 " + ma.bs.nr + " / 历史 " + ma.bs.nh + "，λ=" + ma.bs.lam + "）" +
+          (ma.bs.thin
+            ? "。⚠ 本档近期样本仅 " + ma.bs.nr + " 只，参数基本沿用 2026 上半年高热环境，" +
+              "而市场已在 7 月反转 —— 该档数值可能偏高，只当方向参考"
+            : "") +
+          "。\n⚠ 口径：孖展＝单一券商融资认购渠道的超购倍数，**恒 ≤ 全市场最终公开发售超购倍数**，" +
+          "故此读法是**保守下界**（最终超购若更高，实际结果可能好于本区间上沿）。" +
+          (ma.next
+            ? "\n⚠ 高一档参考：若最终公开发售超购落到 " + overBucketTxt(ma.next.max) +
+              " 档，该档暗盘中位数为 " + pctTxt(ma.next.med, 1) + "。"
+            : "\n⚠ 已是最热一档，无更高档可参考。") +
+          "。\n⚠ 此映射**未标定**：公开渠道拿不到招股期孖展历史值，故只保证档位单调、方向不反，置信度封顶 ★★☆。",
+      });
+      steps.push({
+        k: "暗盘破发概率", type: "info", v: +(ma.b.pb * 100).toFixed(0),
+        d: "该超购档历史上有 " + Math.round(ma.b.pb * 100) + "% 的新股暗盘收在发行价之下" +
+          (ma.b.pb >= 0.5 ? " —— 超过一半会破发，本档整体是负期望" : "") +
+          "（按「历史段 / 近期段」分层混合统计，非单一年份口径）",
+      });
+      // A+H 与赛道**让位**（与 S2 同一取舍逻辑）：超购类信号是无条件混合的档位中位数，
+      // 再叠一个按均值拟合的溢价斜率会重复计价 —— 孖展热度是远强于 A+H 的需求信号。
+      steps.push({
+        k: "A+H 溢价锚", v: null, type: "info",
+        d: ah != null
+          ? "⚠ 本分支不参与计算：已有更直接的市场需求锚（实时孖展 " + ma.m + " 倍），" +
+            "A 股溢价 " + pctTxt(ah) + " 只作很弱的方向参考（2026-07 后该关系基本失效）" + ahBasis(s, ctx)
+          : "该股无 A 股参照，不适用",
+      });
+      steps.push({
+        k: "赛道推断", v: null, type: "info",
+        d: sec.v
+          ? "⚠ 本分支不参与计算：已有更直接的市场需求锚（实时孖展 " + ma.m + " 倍），赛道名称推断不再叠加（" + sec.why + "）"
+          : "名称未命中赛道关键词",
+      });
+    } else if (ah != null) {
       // v0.5.1：改用线性标定（斜率 0.086 + 残差分位），取代旧的 [0.5×, 0.9×+5] 口径。
       //   旧口径实测命中 12.8%、系统偏高；新区间宽度固定 21pt，不会出现下沿>上沿。
       const cal = ahLine(ah);
@@ -647,11 +764,11 @@ window.I668P = (function () {
       let pick = "无赛道信号 \u2192 中性档";
       if (sec.v > 0) { loP = 0; hiP = 18; pick = "赛道偏乐观 \u2192 乐观档"; }
       else if (sec.v < 0) { loP = -15; hiP = 5; pick = "赛道偏悲观 \u2192 悲观档"; }
-      anchor = { k: "赛道方向", txt: sec.v ? pctTxt(sec.v, 0) : "中性", d: "招股期无超购数据，按赛道给出方向性宽区间" };
+      anchor = { k: "赛道方向", txt: sec.v ? pctTxt(sec.v, 0) : "中性", d: "招股期无超购数据、亦无实时孖展数据，按赛道给出方向性宽区间" };
       steps.push({
         k: "基准区间", v: null, type: "base", lo: +loP.toFixed(1), hi: +hiP.toFixed(1),
         d: pick + " \u2192 [" + pctTxt(loP, 0) + ", " + pctTxt(hiP, 0) + "]" +
-          (sec.v ? "（" + sec.why + "；\u26a0 名称推断，此处是「选档」而非「直接加 " + pctTxt(sec.v, 0) + "」）" : ""),
+          (sec.v ? "（" + sec.why + "；\u26a0 名称推断，此处是「选档」而非「直接加 " + pctTxt(sec.v, 0) + "」）" : "") + "。⚠ 本股未取到实时孖展倍数（热度锚缺失），只能给方向性宽区间",
       });
     }
     if (is18c) {
@@ -681,7 +798,11 @@ window.I668P = (function () {
     return mkResult("s1", ipo, loP, hiP, conf, {
       title: KEY_LABEL.s1, basis: KEY_BASIS.s1, anchor: anchor, steps: steps,
       base: null, spread: null, stage: "S1",
-      degrade: "招股期信息最少（无超购数据），区间必然偏宽",
+      pb: pb,
+      margin: ma ? ma.m : null,   // 本次 S1 是否用了孖展热度锚（界面据此改口径说明）
+      degrade: ma
+        ? "招股期已用实时孖展倍数（" + ma.m + " 倍）作热度锚；该映射未标定，置信封顶 ★★☆"
+        : "招股期信息最少（无超购数据、亦无孖展数据），区间必然偏宽",
     });
   }
 
@@ -1366,6 +1487,7 @@ window.I668P = (function () {
     return {
       used: [
         { k: "超购分档", d: "公开超购倍数分 7 档，映射取自 2024–2026 共 106 只新股样本" },
+        { k: "实时孖展倍数（S1 热度锚）", d: "華盛証券「預計孖展倍數」＝ 单一券商融资认购(孖展)渠道的超购倍数，招股期内实时跳变。恒 ≤ 全市场最终公开发售超购倍数（唯一可核查对照：02384 东山精密 孖展 0.39 → 最终 0.52，同落「<15 倍」档），故按**下界**读档，落档后直接复用上表的超购分档参数（同一目标：暗盘收盘相对发行价）。⚠ 该映射**未经历史孖展样本标定** —— 公开渠道（集思录会员专享 / AAStocks 不展示 / etnet 不给 / 智通不可达）拿不到招股期孖展历史值，故只保证「档位单调、方向不反」，不保证数值精度：置信度封顶 ★★☆，界面明写未标定" },
         { k: "赛道修正", d: "按股票名称关键词推断（站点无行业字段），\u00b18% 以内" },
         { k: "A+H 溢价锚", d: "A 股（折港币）较发行价的溢价 → 暗盘方向，线性折算：中枢 = −1.8 + 0.086×溢价，区间 = 中枢 + 残差 [P25,P75]。按 40 只 A+H、用「招股截止日」的 A 股收盘价标定（不用现价，避免数月漂移）。\u26a0 该关系 2026-07 后基本失效（r 由 +0.43 降到 +0.02：+80% 溢价的滨化股份暗盘 −21%），斜率已被近期样本压到 0.086，只作很弱的方向参考" },
         { k: "国配超购", d: "国际配售超购 >5 倍 +3%，<1 倍 \u22124%" },
@@ -1476,6 +1598,63 @@ window.I668P = (function () {
     const d = await loadData();
     LAST = { t: Date.now(), data: d };
     return d;
+  }
+
+  /* ===================== 实时孖展倍数（招股期热度，2026-11-04） =====================
+   *
+   * 这是老板要的核心信息：**多只新股并行招股时，按实时孖展倍数排序才知道该打哪只**。
+   * 申购之后再看到倍数毫无意义 —— 所以它必须是「招股期内实时跳变」的值，
+   * 而不是配售结果公布后的最终超购倍数（后者插件早就有了，但那时已经不能用）。
+   *
+   * 口径（务必与「公开发售超购倍数」分开，界面各自标注）：
+   *   · 華盛證券「預計孖展倍數」＝ 该券商融资认购(孖展)口径的超购倍数，
+   *     招股期内实时跳变，是**最终公开发售超购倍数的下界**（只统计该券商渠道）。
+   *   · 备源 TradeSmart「市場預估超購倍數」＝ 第三方校准估算值，口径不同，仅主源失效时用。
+   *
+   * 抓取走 background（content script 受 CORS 限制读不了跨域券商站）；
+   * 源不可用时保持旧值并如实标注，不编数、不用模型值冒充。
+   */
+  const MARGIN_TTL = 5 * 60 * 1000;   // 孖展倍数几分钟就跳一次，5 分钟取一次够用
+  let MARGIN = { t: 0, src: null, data: {}, err: null };
+
+  function marginOf(code) {
+    const r = MARGIN && MARGIN.data ? MARGIN.data[code] : null;
+    return r || null;
+  }
+  // 倍数热度分档（列表页与详情页共用，避免两处口径漂移）
+  function marginTier(v) {
+    if (v == null) return "";
+    if (v >= 100) return "is-hot";     // 爆款：值得上融资
+    if (v >= 10) return "is-warm";     // 热门
+    if (v >= 1) return "is-mid";       // 一般
+    return "is-cold";                  // 冷门
+  }
+  function marginMeta() {
+    return {
+      t: MARGIN.t || 0, src: MARGIN.src || null,
+      n: MARGIN.data ? Object.keys(MARGIN.data).length : 0,
+      err: MARGIN.err || null,
+    };
+  }
+  async function loadMargin(force) {
+    if (!force && MARGIN.t && Date.now() - MARGIN.t < MARGIN_TTL) return MARGIN;
+    let r = null;
+    try {
+      r = await new Promise((resolve) => {
+        if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) return resolve(null);
+        chrome.runtime.sendMessage({ type: "i668p.margin" }, (res) => {
+          try { void chrome.runtime.lastError; } catch (e) {}   // 读一次即消除未捕获告警
+          resolve(res || null);
+        });
+      });
+    } catch (e) { r = null; }
+    if (r && r.ok && r.data) {
+      MARGIN = { t: Date.now(), src: r.src, data: r.data, err: null };
+      return MARGIN;
+    }
+    // 取不到：保留旧值（可能为空），把原因记下来供界面如实说明
+    MARGIN.err = (r && (r.err || (r.tried && r.tried.length ? r.tried.map((t) => t.src + ":" + t.err).join("; ") : "源无数据"))) || "孖展源不可用";
+    return MARGIN;
   }
 
   /* ===================== 远程参数库（v0.6.0） =====================
@@ -1667,7 +1846,7 @@ window.I668P = (function () {
   /* ===================== 对外接口 ===================== */
   return {
     // 常量
-    SECRET: SECRET, MIN_COL_W: MIN_COL_W, MAX_COL_W: MAX_COL_W, DARK_END: DARK_END,
+    SECRET: SECRET, MIN_COL_W: MIN_COL_W, MAX_COL_W: MAX_COL_W, MARGIN_COL_W: MARGIN_COL_W, DARK_END: DARK_END,
     WIDE_CLASS: WIDE_CLASS, COLS: COLS, STAGE_ORDER: STAGE_ORDER, KEY_ORDER: KEY_ORDER,
     STAGE_NAME: STAGE_NAME, KEY_LABEL: KEY_LABEL, KEY_BASIS: KEY_BASIS, CFG: CFG,
     // 工具
@@ -1683,7 +1862,7 @@ window.I668P = (function () {
     ovGet: ovGet, ovAll: ovAll, ovSet: ovSet, ovDel: ovDel, ovCount: ovCount,
     // API / 行情
     apiGet: apiGet, gtimg: gtimg, toGtimgCode: toGtimgCode,
-    gtimgCloseAt: gtimgCloseAt, ahLibRec: ahLibRec, ahBasis: ahBasis,
+    gtimgCloseAt: gtimgCloseAt, ahLibRec: ahLibRec,
     // AHC 会被远程数据整体替换，这里必须用 getter，否则导出的是旧引用
     get AH_CLOSE() { return AHC; },
     // 远程参数库
@@ -1692,6 +1871,9 @@ window.I668P = (function () {
     get REMOTE_VER() { return REMOTE_VER; },
     get EX() { return EX; },
     loadData: loadData, loadDataCached: loadDataCached,
+    // 实时孖展倍数（招股期热度）
+    loadMargin: loadMargin, marginOf: marginOf, marginMeta: marginMeta, marginTier: marginTier,
+    marginAnchor: marginAnchor, marginTierLabel: marginTierLabel,
     // 阶段
     pdate: pdate, todayDate: todayDate, nowHour: nowHour, getStage: getStage, stageNote: stageNote,
     stageFocus: stageFocus,

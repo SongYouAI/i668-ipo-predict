@@ -27,6 +27,92 @@ const REPO = "SongYouAI/i668-ipo-predict";
 const DATA_PATH = "dist/latest.json";
 const CDN_HOSTS = ["testingcf", "gcore", "fastly", "cdn"];
 
+/* =========================================================================
+ * 实时孖展倍数（招股期热度）—— 2026-11-04 新增
+ *
+ * 为什么必须由 background 抓：content script 的 fetch 受页面 CORS 约束，
+ * 读不了跨域的券商站点；background 的 fetch 带扩展 host_permissions，不受限制。
+ *
+ * ⚠️ 口径必须分清，界面不能混着显示：
+ *   huasheng   → 華盛證券「預計孖展倍數」＝ 该券商融资认购(孖展)口径的超购倍数，
+ *                招股期内实时跳变，是**最终公开发售超购倍数的下界**。
+ *   tradesmart → 第三方（TradeSmart）按 AAStocks/華盛 校准估算的「市場預估超購倍數」，
+ *                与上一条不是同一口径，只在主源取不到时兜底。
+ *
+ * 两个源都是**服务端渲染的 HTML**（非 JS 渲染），故纯 fetch + 正则即可解析，
+ * 不需要执行页面脚本 —— 这也是选它们而不选 AAStocks/etnet 的原因（那两个是 SPA）。
+ * ========================================================================= */
+const MARGIN_SOURCES = [
+  { src: "huasheng", url: "https://www.valuable.com.hk/ipo/hk/v2/ipo-hk-index" },
+  { src: "huasheng", url: "https://www.vbkr.com/ipo/hk/v2/ipo-hk-index" },
+  { src: "tradesmart", url: "https://lowrisktradesmart.org/zh-hk/tools/ipo-tracker" },
+];
+
+async function fetchHtml(url) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const res = await fetch(url, {
+      cache: "no-store", signal: ctl.signal, credentials: "omit",
+      headers: { "Accept": "text/html,application/xhtml+xml", "Accept-Language": "zh-HK,zh;q=0.9" },
+    });
+    if (!res.ok) return { ok: false, status: res.status };
+    const text = await res.text();
+    return { ok: true, status: res.status, text: text };
+  } catch (e) {
+    return { ok: false, err: String((e && e.message) || e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 華盛：表格每行一个新股，第 1 列是「02065.HK」，第 7 列是「<span class="col-blue">12.34倍</span>」
+function parseMarginTable(html) {
+  const out = {};
+  const trs = html.match(/<tr[^>]*>[\s\S]*?<\/tr>/g) || [];
+  for (const tr of trs) {
+    const tds = tr.match(/<td[^>]*>[\s\S]*?<\/td>/g) || [];
+    if (tds.length < 7) continue;
+    const codeM = tds[0].match(/(\d{5})\.HK/);
+    if (!codeM) continue;
+    const flat = tds[6].replace(/<[^>]+>/g, " ");
+    const multM = flat.match(/([\d.]+)\s*倍/);
+    if (!multM) continue;
+    const m = parseFloat(multM[1]);
+    if (!isFinite(m)) continue;
+    const name = tds[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")
+      .replace(/最大\s*\d+\s*倍槓杆融資/, "").trim();
+    out[codeM[1]] = { m: m, n: name };
+  }
+  return out;
+}
+
+// TradeSmart：Next.js SSR，数据在转义后的 flight JSON 里
+//   \"symbol\":\"02065\", ... \"oversubscription_ratio\":0.352
+function parseMarginTradeSmart(html) {
+  const out = {};
+  const re = /\\"symbol\\":\\"(\d{5})\\"[\s\S]{0,800}?\\"oversubscription_ratio\\":([\d.]+)/g;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const v = parseFloat(m[2]);
+    if (isFinite(v)) out[m[1]] = { m: v, n: "" };
+  }
+  return out;
+}
+
+async function fetchMargin() {
+  const tried = [];
+  for (const s of MARGIN_SOURCES) {
+    const r = await fetchHtml(s.url);
+    if (!r.ok) { tried.push({ src: s.src, url: s.url.slice(0, 70), err: r.err || ("HTTP " + r.status) }); continue; }
+    const data = s.src === "tradesmart" ? parseMarginTradeSmart(r.text) : parseMarginTable(r.text);
+    const keys = Object.keys(data);
+    if (!keys.length) { tried.push({ src: s.src, url: s.url.slice(0, 70), err: "解析到 0 只新股" }); continue; }
+    return { ok: true, src: s.src, url: s.url, ts: Date.now(), count: keys.length, data: data, tried: tried };
+  }
+  return { ok: false, err: "所有孖展源均失败", tried: tried };
+}
+
 async function fetchText(url) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), FETCH_TIMEOUT);
@@ -89,6 +175,14 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
       .then(sendResponse)
       .catch((e) => sendResponse({ ok: false, tried: [], err: String((e && e.message) || e) }));
     return true;   // 异步回复，通道保持打开
+  }
+
+  // 招股期实时孖展倍数（跨域抓券商公开页，background 才能绕开 CORS）
+  if (msg.type === "i668p.margin") {
+    fetchMargin()
+      .then(sendResponse)
+      .catch((e) => sendResponse({ ok: false, err: String((e && e.message) || e), tried: [] }));
+    return true;
   }
 
   // 通用取文本（调试 / 将来扩展用）

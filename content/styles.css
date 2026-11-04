@@ -52,9 +52,10 @@ html.i668p-wide .app { max-width: none !important; }
   white-space: nowrap !important;
 }
 
-/* 预测区与站点原表的分界（第一列左侧一道线，视觉上"原表 | 新增区"分明） */
-th[data-pred="s1"],
-td[data-pred="s1"] { border-left: 2px solid #cfd8e3 !important; }
+/* 预测区与站点原表的分界（第一列左侧一道线，视觉上"原表 | 新增区"分明）
+   v0.6.4：「实时孖展」列插到了新增区最前面，分界线跟着它走。 */
+th[data-pred="margin"],
+td[data-pred="margin"] { border-left: 2px solid #cfd8e3 !important; }
 
 .i668p-th small {
   display: block;
@@ -62,6 +63,13 @@ td[data-pred="s1"] { border-left: 2px solid #cfd8e3 !important; }
   font-weight: 400 !important;
   font-size: 11px !important;
 }
+
+/* v0.8.0：「实时孖展」列收窄到 64px，表头「实时孖展」四字需缩一档字号才放得下
+   （12px × 4 = 48px < 64px − 边框2px）。同时把横向 padding 归零 ——
+   站点 th 自带 padding 会再吃掉十几像素，窄列里会顶出去。
+   预测三列表头字号不动。 */
+.i668p-th.is-narrow { font-size: 12px !important; padding-left: 0 !important; padding-right: 0 !important; }
+.i668p-th.is-narrow small { font-size: 10px !important; }
 
 .i668p-td {
   text-align: center !important;
@@ -138,6 +146,28 @@ td[data-pred="s1"] { border-left: 2px solid #cfd8e3 !important; }
   font-size: 12px;
   color: #98a4b3 !important;
 }
+
+/* ── 实时孖展倍数（招股期热度） ─────────────────────────────────
+   倍数越高 ＝ 市场认购越踊跃 ＝ 越值得打、越值得上融资。
+   按中国惯例着色：热=红、暖=橙、平=蓝、冷=绿。
+   数字用等宽数字（tabular-nums），避免倍数跳动时整列左右抖。 */
+.i668p-margin {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.i668p-margin.is-hot { color: #c0392b; }     /* ≥100 倍：爆款 */
+.i668p-margin.is-warm { color: #d97706; }     /* ≥10 倍：热门 */
+.i668p-margin.is-mid { color: #185fa5; }      /* ≥1 倍：一般 */
+.i668p-margin.is-cold { color: #1a7f4b; }     /* <1 倍：冷门 */
+
+/* 可排序的列头（实时孖展列） */
+.i668p-th.is-sortable { cursor: pointer; }
+.i668p-th.is-sortable:hover { color: #ffd27a !important; }
+.i668p-th.is-sorted { color: #ffd27a !important; }
+.i668p-sortarrow { font-size: 11px; opacity: .9; }
 
 .i668p-tag {
   font-size: 10px;
@@ -544,6 +574,12 @@ td[data-pred="s1"] { border-left: 2px solid #cfd8e3 !important; }
 /* 工坊顶部速览里的绿鞋行 */
 .i668p-ws-kv.is-gy .i668p-ws-vv { color: #a36a00; font-weight: 700; }
 .i668p-ws-kv.is-gn .i668p-ws-vv { color: #6b7a91; }
+
+/* 实时孖展倍数的热度着色（与列表页同一套分档：热红 / 暖橙 / 平蓝 / 冷绿） */
+.i668p-ws-kv.is-hot .i668p-ws-vv { color: #c0392b; font-weight: 700; }
+.i668p-ws-kv.is-warm .i668p-ws-vv { color: #d97706; font-weight: 700; }
+.i668p-ws-kv.is-mid .i668p-ws-vv { color: #185fa5; font-weight: 700; }
+.i668p-ws-kv.is-cold .i668p-ws-vv { color: #1a7f4b; font-weight: 700; }
 .i668p-ws-arow .is-up { color: #c0392b; font-weight: 700; }
 .i668p-ws-arow .is-down { color: #1a7f4b; font-weight: 700; }
 .i668p-ws-ad { color: #8a94a6; font-size: 11px; }

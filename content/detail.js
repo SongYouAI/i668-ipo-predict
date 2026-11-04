@@ -10,7 +10,7 @@
  * 工坊五块：
  *  ① 三阶段预测卡（含状态：当前 / 已过 / 未到 / 待公布 / 已实测）
  *  ② 计算过程：逐项拆开每一步的增量与理由（可解释）
- *  ③ 模型因子：已纳入 8 项 + 只展示 2 项（不入权重）+ 未纳入 2 项及原因
+ *  ③ 模型因子：已纳入 9 项 + 只展示 3 项（不入权重）+ 未纳入 2 项及原因
  *  ④ 招股书数据：基石配售 + 超额配股权（绿鞋，老板要求必须展示）
  *  ⑤ 手动改价：区间（可填价格或涨跌幅）+ 备注；事实（暗盘/首日）只读不可改
  * ========================================================================= */
@@ -269,7 +269,13 @@
   // 置信度不是随便打星：它来自该条件集样本的历史离散度，必须说清来源。
   // ⚠️ S2 按「超购档」、S3 按「暗盘档」定星，两者依据不同，不能共用一句「超购档」。
   function confWhy(r) {
-    if (r.key === "s1") return "招股期无超购数据，信息最少";
+    if (r.key === "s1") {
+      // v0.8.0：S1 现在会用实时孖展倍数作热度锚（有孖展时），
+      // 所以「信息最少」这句只在真的没有孖展数据时才成立。
+      return r.margin != null
+        ? "以实时孖展倍数落热度档（该映射未标定，置信封顶 ★★☆）"
+        : "招股期无超购数据、亦无孖展数据，信息最少";
+    }
     if (r.key === "s3") {
       if (r.conf >= 3) return "该暗盘涨幅档样本多、偏移区间窄";
       if (r.conf === 2) return "该暗盘档偏移区间中等宽度";
@@ -647,6 +653,20 @@
     kv(facts, "状态", blkS
       ? (blkS.k === "intro" ? blkS.label + "（介绍上市）" : blkS.label + (lsS ? "（站点状态 " + lsS + "）" : ""))
       : P.stageNote(ST.stock, P.todayDate()));
+    // 实时孖展倍数（招股期热度）：老板最看重的决策依据 —— 多只新股并行招股时靠它排序。
+    // 口径与「公开发售超购（配售后最终值）」完全不同，必须写清楚，不能让人混读。
+    const mg = P.marginOf(ST.code), mm = P.marginMeta();
+    const mgk = kv(facts, "实时孖展倍数",
+      mg ? (mg.m >= 100 ? Math.round(mg.m) : Math.round(mg.m * 100) / 100) + " 倍" : "—",
+      mg ? P.marginTier(mg.m) : "is-cold");
+    mgk.title = "口径：華盛證券「預計孖展倍數」＝ 券商融资认购(孖展)口径的超购倍数，招股期内实时跳变\n" +
+      "含义：倍数越高＝市场认购越踊跃＝越值得打、越值得上融资\n" +
+      "联动：招股期预测（S1）已用本倍数作热度锚 → 落 " + P.overBucketTxt(mg.m) +
+      " 档，故倍数一动、S1 区间跟着动\n" +
+      "边界：只统计该券商渠道，是**最终公开发售超购倍数的下界**；与下方「公开发售超购（配售后最终值）」口径不同，不可直接比较\n" +
+      "数据源：華盛證券公开页" + (mm.src === "tradesmart" ? "（备源：第三方校准估算值）" : "") +
+      " · 更新于 " + (mm.t ? new Date(mm.t).toLocaleString("zh-CN") : "—") +
+      (mg ? "" : "\n当前未取到：" + (mm.err || "该股不在孖展源列表中"));
     kv(facts, "公开发售超购", ST.stock.public_offer_subscription_multiple != null ? ST.stock.public_offer_subscription_multiple + " 倍" : "未公布");
     // 绿鞋放在速览区最显眼处（老板明确要求"必须展示"）：它是上市后 30 天内唯一的官方托价机制
     // 内置没有时先放占位（data-i668p-gs=facts），待 ensureGreenShoe 异步解析后回填
@@ -794,6 +814,8 @@
     try {
       const d = await P.loadDataCached(false);   // 60s 缓存；本 tick 120s 一次 → 必然真的去取
       if (MOUNT_FOR !== code) return;            // 期间已切股 → 丢弃过期结果
+      // 孖展倍数跳得快，跟着 tick 一起刷新（内部 5min 节流）
+      P.loadMargin(false).then(() => { if (MOUNT_FOR === code) render(); }).catch(() => {});
       const s = d.map[code];
       if (!s) return;
       const td = P.todayDate();
@@ -819,6 +841,8 @@
     try {
       const d = await P.loadDataCached(!!force);
       P.CACHE = d;
+      // 实时孖展：并行拉取，不阻塞首屏（源不可达时最多等 12s）—— 拿到后再重绘本页
+      P.loadMargin(!!force).then(() => { if (MOUNT_FOR === code) render(); }).catch(() => {});
       const s = d.map[code];
       if (!s) { ST.failed = "站点「新股列表」接口未返回该代码"; ST.stock = null; }
       else {

@@ -1,7 +1,8 @@
 /* =========================================================================
  * 港股打新预测 · i668 增强  —  列表页视图（list.js）
  *
- * 职责：在 /stocks 列表页表格**最右追加**三列预测（不改动站点原有列序/列宽/行高），
+ * 职责：在 /stocks 列表页表格**最右追加**四列（实时孖展倍数 + S1/S2/S3 预测），
+ *       不改动站点原有列序/列宽/行高。
  * 并把「腾出的宽度」给预测列，实现一屏全见。
  *
  * v0.4.0 变更：
@@ -12,7 +13,7 @@
  *     模型未纳入因子 + 引导进详情页工坊，让人一眼判断这个数怎么来的、要不要改。
  *
  * 布局红线（动它之前先读）：
- *  · 三列一律 appendChild 到行尾（表格最右），绝不插到原列之间；
+ *  · 四列一律 appendChild 到行尾（表格最右），绝不插到原列之间；
  *  · 先量准并锁死站点原表列宽，**之后**才放开 .app 宽度锁（站点「新股」列是弹性列，
  *    顺序反了它会从 200px 涨到 700px ＝ 改坏原表）；
  *  · 预测格内容 ≤2 行，保证行高 32px → 33px（仅 +1px）。
@@ -22,7 +23,7 @@
   const P = window.I668P;
   if (!P) { console.warn("[i668p] core 未加载，list 层跳过"); return; }
 
-  const COLS = P.COLS, MIN_COL_W = P.MIN_COL_W, MAX_COL_W = P.MAX_COL_W;
+  const COLS = P.COLS, MIN_COL_W = P.MIN_COL_W, MAX_COL_W = P.MAX_COL_W, MARGIN_COL_W = P.MARGIN_COL_W;
   const WIDE_CLASS = P.WIDE_CLASS, STAGE_ORDER = P.STAGE_ORDER, KEY_ORDER = P.KEY_ORDER;
 
   let COL_W = 140;          // 当前预测列宽（每轮由 applyWidth 计算写回）
@@ -63,7 +64,7 @@
     if (!cg) return;
     keys.forEach((k) => {
       const col = document.createElement("col");
-      col.style.width = COL_W + "px";
+      col.style.width = (k === "margin" ? MARGIN_COL_W : COL_W) + "px";
       col.setAttribute("data-pred-col", k);
       cg.appendChild(col);
     });
@@ -118,19 +119,25 @@
     [...row.children].forEach((t) => { if (!t.hasAttribute("data-pred")) w += t.getBoundingClientRect().width; });
     return Math.round(w) || 920;
   }
-  // 列宽自适应 + 表格总宽 = 原表宽 + 3 列；el-table 的 table 宽度会被 Vue 重置，故每轮重设。
+  // 列宽自适应 + 表格总宽 = 原表宽 + 孖展窄列 + 3 列预测宽；el-table 的 table 宽度会被 Vue 重置，故每轮重设。
+  // v0.8.0：「实时孖展」列改为**固定窄宽**（老板：这一列太宽了）。三列预测列分剩余可用宽度。
   function applyWidth(header, body, block) {
     const base = measureBase(header);
-    const avail = (block && block.clientWidth) ? block.clientWidth : (base + COL_W * COLS.length);
-    const w = P.clamp(Math.floor((avail - base) / COLS.length), MIN_COL_W, MAX_COL_W);
+    const n = COLS.length - 1;                       // 三列预测列（孖展列固定窄宽，不参与均分）
+    const avail = (block && block.clientWidth) ? block.clientWidth : (base + MARGIN_COL_W + COL_W * n);
+    const w = P.clamp(Math.floor((avail - base - MARGIN_COL_W) / n), MIN_COL_W, MAX_COL_W);
     COL_W = w;
-    const px = w + "px";
-    header.querySelectorAll("col[data-pred-col]").forEach((c) => { if (c.style.width !== px) c.style.width = px; });
-    body.querySelectorAll("col[data-pred-col]").forEach((c) => { if (c.style.width !== px) c.style.width = px; });
-    const target = (base + w * COLS.length) + "px";
+    const px = w + "px", mpx = MARGIN_COL_W + "px";
+    const setW = (c) => {
+      const want = (c.getAttribute("data-pred-col") === "margin") ? mpx : px;
+      if (c.style.width !== want) c.style.width = want;
+    };
+    header.querySelectorAll("col[data-pred-col]").forEach(setW);
+    body.querySelectorAll("col[data-pred-col]").forEach(setW);
+    const target = (base + MARGIN_COL_W + w * n) + "px";
     if (header.style.width !== target) header.style.width = target;
     if (body.style.width !== target) body.style.width = target;
-    return { base: base, colW: w, avail: avail };
+    return { base: base, colW: w, marginW: MARGIN_COL_W, avail: avail };
   }
 
   // 幂等：完整则复用（避免每轮重建抖动），不完整则清空重插
@@ -156,9 +163,10 @@
       insertColsInto(body, keys);
       COLS.forEach((c) => {
         const el = document.createElement("th");
-        el.className = "i668p-th";
+        el.className = "i668p-th" + (c.key === "margin" ? " is-sortable is-narrow" : "");
         el.setAttribute("data-pred", c.key);
         el.innerHTML = c.title + "<small>" + c.sub + "</small>";
+        if (c.key === "margin") el.title = "点击按实时孖展倍数排序（降序 ↔ 升序）\n倍数越高＝市场认购越踊跃＝越值得打、越值得上融资";
         hRow.appendChild(el);
       });
       rows.forEach((r) => {
@@ -184,6 +192,86 @@
     }
     const m = (first.textContent || "").match(/\d{5}/);
     return m ? m[0] : null;
+  }
+
+  /* ---------------------- 实时孖展倍数（招股期热度） ----------------------
+   * 这是老板要的核心信息：**多只新股并行招股时，按实时孖展倍数排序才知道该打哪只**。
+   * 申购之后再看到倍数毫无意义 —— 所以要的是「招股期内实时跳变」的值，
+   * 不是配售结果公布后的最终超购倍数（那个插件早就有，但那时已经不能用了）。
+   *
+   * 口径：華盛證券「預計孖展倍數」＝ 券商融资认购(孖展)口径的超购倍数，
+   *      是**最终公开发售超购倍数的下界**（只统计该券商渠道）。
+   *      与详情页「公开发售超购（配售后最终值）」不是一回事，界面必须各自标注。
+   * 取不到就显示「—」并说明原因，**绝不用模型值或任何估算冒充**。 */
+  function renderMarginCell(td, code) {
+    td.className = "i668p-td";
+    td.innerHTML = "";
+    td.removeAttribute("title");
+    const m = P.marginOf(code);
+    const meta = P.marginMeta();
+    if (!m) {
+      td.classList.add("is-inactive");
+      td.title = meta.n
+        ? "该股不在孖展源列表中（可能尚未进入招股或已下架）"
+        : "实时孖展倍数未取到：" + (meta.err || "孖展源不可用") + "。\n" +
+          "倍数是招股期决策的核心信息，插件不会用估算值替代 —— 请直接看券商 App。";
+      return putText(td, "—", "i668p-invalid");
+    }
+    const cell = document.createElement("div");
+    cell.className = "i668p-cell";
+    const v = document.createElement("div");
+    v.className = "i668p-margin " + P.marginTier(m.m);
+    v.textContent = (m.m >= 100 ? Math.round(m.m) : Math.round(m.m * 100) / 100) + "倍";
+    cell.appendChild(v);
+    td.appendChild(cell);
+    td.classList.add("is-margin");
+    td.title = "实时孖展倍数 " + m.m + " 倍\n" +
+      "联动：右侧「招股期预测 S1」已用本倍数作热度锚 → 落 " + P.overBucketTxt(m.m) +
+      " 档，倍数一动、S1 区间跟着动\n" +
+      "口径：華盛證券「預計孖展倍數」＝ 券商融资认购(孖展)口径的超购倍数，招股期内实时跳变\n" +
+      "含义：倍数越高＝市场认购越踊跃＝热度越高，值得打、值得上融资\n" +
+      "边界：它是**最终公开发售超购倍数的下界**（只统计该券商渠道），与下方「公开发售超购（配售后最终值）」口径不同，不可直接比较\n" +
+      "数据源：華盛證券公开页" + (meta.src === "tradesmart" ? "（备源：第三方校准估算值）" : "") +
+      " · 更新于 " + (meta.t ? new Date(meta.t).toLocaleString("zh-CN") : "—");
+  }
+
+  /* ---------------------- 按孖展倍数排序 ----------------------
+   * 老板的原话：「公司多的时候要知道哪一个实时倍数最高」。
+   * 只在用户点了列头之后才动行序（默认保持站点原序，避免一进页面就找不到熟悉的行）。
+   * 排序是把 <tr> 在 tbody 内重排 —— Vue 重建表格后由 render() 末尾自动重排复原。 */
+  let SORT = null;          // null | "desc" | "asc"
+  function sortedRows() {
+    if (!SORT) return;
+    const { body } = findTables();
+    if (!body) return;
+    const all = [...body.querySelectorAll("tr")];
+    const rows = all.filter((r) => r.children.length >= 5);
+    const others = all.filter((r) => r.children.length < 5);
+    const keyed = rows.map((r) => {
+      const code = parseCode(r);
+      const m = code ? P.marginOf(code) : null;
+      return { r: r, m: m ? m.m : null };
+    });
+    keyed.sort((a, b) => {
+      if (a.m == null && b.m == null) return 0;
+      if (a.m == null) return 1;                 // 没有孖展数据的沉底
+      if (b.m == null) return -1;
+      return SORT === "asc" ? a.m - b.m : b.m - a.m;
+    });
+    keyed.forEach((k) => body.appendChild(k.r));
+    others.forEach((r) => body.appendChild(r));
+  }
+  function updateSortUI() {
+    const th = document.querySelector('th[data-pred="margin"]');
+    if (!th) return;
+    let a = th.querySelector(".i668p-sortarrow");
+    if (!a) {
+      a = document.createElement("span");
+      a.className = "i668p-sortarrow";
+      th.appendChild(a);
+    }
+    a.textContent = SORT === "desc" ? " ↓" : (SORT === "asc" ? " ↑" : " ⇅");
+    th.classList.toggle("is-sorted", !!SORT);
   }
 
   /* ---------------------- 单元格渲染 ---------------------- */
@@ -473,6 +561,12 @@
       .forEach((s) => line(t, s.k, P.pctTxt(s.v, 1)));
     line(t, "预测区间", P.fmt(r.lo) + "\u2013" + P.fmt(r.hi) + "（" + P.pctTxt(r.loPct) + " ~ " + P.pctTxt(r.hiPct) + "）", "is-strong");
     line(t, "置信度", P.stars(r.conf) + "（" + (r.conf >= 3 ? "较高" : r.conf === 2 ? "中等" : "偏低") + "）");
+    // v0.8.0：S1 用了实时孖展当热度锚 → 必须把口径与「未标定」摆在明面上，
+    //   否则一个 ★☆☆ 的窄区间会被当成精确预测。
+    if (d.key === "s1" && r.margin != null) {
+      line(t, "热度锚口径", "实时孖展 " + r.margin + " 倍（券商融资认购口径，为最终公开发售超购倍数的下界）", "is-warn");
+      line(t, "未标定", "孖展→暗盘 映射无历史样本可标定，只保证档位单调，置信封顶 ★★☆", "is-warn");
+    }
     const miss = (P.factorCatalog().missing || []).slice(0, 3).map((m) => m.k).join(" / ");
     if (miss) line(t, "模型未纳入", miss, "is-warn");
     const box = document.createElement("div");
@@ -524,6 +618,12 @@
             const el = r.querySelector('[data-pred="' + c.key + '"]');
             if (!el) return;
             try {
+              // 孖展列不是模型预测，单独渲染（没有阶段语义，也不参与 S1/S2/S3 判定）
+              if (c.key === "margin") {
+                renderMarginCell(el, code);
+                filled++;
+                return;
+              }
               renderCell(el, res, c.key, stage, stock, code);
               if (el.classList.contains("is-manual")) manual++;
               filled++;
@@ -541,6 +641,10 @@
       P.warnOnce("render", e);
       out.errs = P.ERRS.length;
     } finally {
+      // 排序态：Vue 重建表格后把行序复原。必须在 MO 重新 observe **之前**做 ——
+      // 否则这次 DOM 变更会被 observer 当成「结构变化」，再触发一轮 render（自触发环）。
+      updateSortUI();
+      if (SORT) sortedRows();
       if (MO) MO.observe(document.body, { childList: true, subtree: true });
     }
     return out;
@@ -577,16 +681,35 @@
     const st = bar(manual ? "重算中\u2026" : "加载预测中\u2026");
     try {
       P.CACHE = await P.loadDataCached(manual);
+      // 实时孖展倍数：独立数据源（跨域券商公开页，走 background），失败不影响主流程
+      await P.loadMargin(manual);
       const r = render();
       const cnt = Object.keys(P.CACHE.map).length;
       const env = P.CFG.liveMarket && P.CACHE.ctx.hsi != null ? "恒指 " + P.CACHE.ctx.hsi.toFixed(2) + "%" : "行情未启用";
       const errN = (r && r.errs) || 0;
+      const mm = P.marginMeta();
+      // 最热的一只：老板要的就是「哪只倍数最高」，直接摆在浮条上
+      let hot = "";
+      if (mm.n) {
+        const arr = Object.keys(P.CACHE.map)
+          .map((c) => ({ c: c, m: P.marginOf(c) }))
+          .filter((x) => x.m)
+          .sort((a, b) => b.m.m - a.m.m);
+        if (arr.length) {
+          const h = arr[0];
+          const nm = (P.CACHE.map[h.c] && P.CACHE.map[h.c].stock_name) || h.c;
+          hot = " \u00b7 最热 " + h.c + " " + nm + " " +
+            (h.m.m >= 100 ? Math.round(h.m.m) : Math.round(h.m.m * 100) / 100) + "倍";
+        }
+      }
       st.textContent = r.found
-        ? "已注入 " + r.rows + " 行 \u00d7 3 列 \u00b7 样本 " + cnt + " 只 \u00b7 " + env +
+        ? "已注入 " + r.rows + " 行 \u00d7 " + COLS.length + " 列 \u00b7 样本 " + cnt + " 只 \u00b7 " + env +
+          (mm.n ? " \u00b7 孖展 " + mm.n + " 只" + hot : (mm.err ? " \u00b7 孖展未取到" : "")) +
           (r.manual ? " \u00b7 \u270e 人工设定 " + r.manual + " 格" : "") +
           (errN ? " \u00b7 \u26a0 " + errN + " 类异常" : "")
         : "未匹配到新股表格（页面结构可能已变化）";
-      st.title = "数据来源 i668 /api/ipo-stocks；行情 腾讯 gtimg。悬浮预测格看计算过程，点进详情页可手动改价。仅供研究，非投资建议。";
+      st.title = "数据来源 i668 /api/ipo-stocks；行情 腾讯 gtimg；实时孖展 华盛证券公开页（融资认购口径，招股期实时跳变）。" +
+        "点「实时孖展」列头可按倍数排序。悬浮预测格看计算过程，点进详情页可手动改价。仅供研究，非投资建议。";
     } catch (e) {
       const r2 = render();
       st.textContent = "数据获取失败：" + e.message + (r2 && r2.found ? "（沿用上次数据）" : "（刷新重试）");
@@ -594,7 +717,7 @@
   }
 
   /* ---------------------- 启动 / 停止 ---------------------- */
-  let overHandler = null, outHandler = null, scrollHandler = null;
+  let overHandler = null, outHandler = null, scrollHandler = null, headHandler = null;
 
   function start() {
     if (STARTED) return;
@@ -617,6 +740,17 @@
     document.addEventListener("mouseover", overHandler, true);
     document.addEventListener("mouseout", outHandler, true);
     window.addEventListener("scroll", scrollHandler, true);
+    // 列头点击 → 按孖展倍数排序（事件委托：th 会被重建，绑在元素上会丢）
+    headHandler = (e) => {
+      const t = e.target;
+      if (!t || !t.closest) return;
+      const th = t.closest('th[data-pred="margin"]');
+      if (!th) return;
+      SORT = SORT === "desc" ? "asc" : "desc";
+      updateSortUI();
+      sortedRows();
+    };
+    document.addEventListener("click", headHandler, true);
 
     run(false);
 
@@ -654,7 +788,8 @@
     if (overHandler) document.removeEventListener("mouseover", overHandler, true);
     if (outHandler) document.removeEventListener("mouseout", outHandler, true);
     if (scrollHandler) window.removeEventListener("scroll", scrollHandler, true);
-    overHandler = outHandler = scrollHandler = null;
+    if (headHandler) document.removeEventListener("click", headHandler, true);
+    overHandler = outHandler = scrollHandler = headHandler = null;
     // 清理：直接全文档扫，不依赖 findTables —— SPA 切换后页面上可能已经是另一张表，
     // 按表清理会漏掉（v0.4.1「详情页残留三列」就是这个原因）。
     document.querySelectorAll("[data-pred-col], th[data-pred], td[data-pred]").forEach((n) => n.remove());
