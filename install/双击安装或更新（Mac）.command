@@ -47,7 +47,7 @@ if [ "$SKIP_EXTRACT" = "0" ]; then
   done
 
   if [ -z "$ZIP" ]; then
-    say "本地没找到 i668*.zip，正在从 GitHub 下载（约 1.5MB，通常十几秒）…"
+    say "本地没找到 i668*.zip，正在从 GitHub 下载（约 1.6MB，通常十几秒）…"
     curl -L --progress-bar --max-time 900 -o /tmp/i668-install.zip \
       "https://github.com/SongYouAI/i668-ipo-predict/releases/latest/download/i668-ipo-predict.zip"
     if [ ! -s /tmp/i668-install.zip ] || [ "$(wc -c < /tmp/i668-install.zip)" -lt 100000 ]; then
@@ -118,7 +118,7 @@ say ""
 say "        $FINAL"
 say ""
 say "--------------------------------------------------------------"
-say "  装好后：打开 https://www.i668.vip/stocks 就能看到预测三列。"
+say "  装好后：打开 https://www.i668.vip/stocks 就能看到实时孖展倍数 ＋ 三列预测。"
 say "  以后作者更新：双击本脚本一次 → 回扩展页点一下那个 ⟳ 刷新按钮。"
 say "  因子库与模型参数会自己同步，不用重装。"
 say "=============================================================="

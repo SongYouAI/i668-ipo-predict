@@ -35,7 +35,7 @@ for %%F in ("%~dp0i668*.zip" "%~dp0..\i668*.zip" "%USERPROFILE%\Downloads\i668*.
 )
 
 if not defined ZIP (
-  echo 本地没找到 i668*.zip，正在从 GitHub 下载（约 1.5MB，通常十几秒）...
+  echo 本地没找到 i668*.zip，正在从 GitHub 下载（约 1.6MB，通常十几秒）...
   powershell -NoProfile -Command "try { Invoke-WebRequest -Uri 'https://github.com/SongYouAI/i668-ipo-predict/releases/latest/download/i668-ipo-predict.zip' -OutFile '%TEMP%\i668-install.zip' -UseBasicParsing } catch { exit 1 }"
   if not exist "%TEMP%\i668-install.zip" (
     echo.
@@ -115,7 +115,7 @@ echo.
 echo          %FINAL%
 echo.
 echo --------------------------------------------------------------
-echo    装好后：打开 https://www.i668.vip/stocks 就能看到预测三列。
+echo    装好后：打开 https://www.i668.vip/stocks 就能看到实时孖展倍数 ＋ 三列预测。
 echo    以后作者更新：双击本脚本一次，回扩展页点那个 ↻ 刷新按钮。
 echo    因子库与模型参数会自己同步，不用重装。
 echo ==============================================================
